@@ -205,7 +205,7 @@ describe("MATLAB frontend integration", () => {
     expect(screen.getByRole("slider", { name: "Comparison position" })).toHaveValue("0");
     fireEvent.click(screen.getByRole("button", { name: "Remove image" }));
     expect(screen.getByRole("button", { name: "Choose image" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Save image" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save image" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Contrast stretching" })).toBeDisabled();
   });
 

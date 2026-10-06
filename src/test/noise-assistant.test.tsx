@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { NoisePlayground } from "@/components/noise-playground";
 import { LearningAssistant } from "@/components/learning-assistant";
@@ -108,7 +108,7 @@ it("uses the clean ID for every realization, noisy ID for filters, actual compar
   });
   fireEvent.click(screen.getByRole("button", { name: "Save filtered image" }));
   expect(downloads).toEqual(["data:image/png;base64,ZmlsdGVyZWQ="]);
-  fireEvent.change(screen.getByLabelText("Selected filter"), { target: { value: "mean" } });
+  fireEvent.click(screen.getByRole("button", { name: "Mean" }));
   expect(screen.getByRole("button", { name: "Save filtered image" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Apply filter" }));
   await waitFor(() => expect(enhanceImage).toHaveBeenCalledTimes(2));
@@ -138,7 +138,11 @@ it("blocks stale noise filtering, regenerates from clean, and uses accurate Gaus
   expect(vi.mocked(addNoise).mock.calls[1]![0]).toBe("clean-id");
   expect(vi.mocked(addNoise).mock.calls[1]![1].seed).not.toBe(42);
   await waitFor(() => expect(screen.getByRole("button", { name: "Add noise" })).toBeEnabled());
-  fireEvent.change(screen.getByLabelText("Noise type"), { target: { value: "gaussian" } });
+  fireEvent.click(
+    within(screen.getByRole("group", { name: "Noise type" })).getByRole("button", {
+      name: "Gaussian",
+    }),
+  );
   expect(screen.getByLabelText("Standard deviation (σ)")).toHaveValue("0.05");
   fireEvent.click(screen.getByRole("button", { name: "Add noise" }));
   await waitFor(() => expect(addNoise).toHaveBeenCalledTimes(3));

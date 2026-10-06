@@ -1,7 +1,7 @@
 # Pixel Perfect Pix
 
 LumaLab is a local image enhancement laboratory with a React/TanStack Start frontend
-and real MATLAB processing. Its charcoal/green studio dashboard centers the image
+and real MATLAB processing. Its midnight/ivory studio dashboard with amber actions and dusty blue analysis centers the image
 comparison, with selective glass panels, contextual adjustments, and actual image
 histograms/statistics. Intensity transformations change tones; spatial filters
 use neighboring pixels to smooth noise, sharpen detail, or reveal edges.

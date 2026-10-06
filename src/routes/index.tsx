@@ -31,6 +31,8 @@ import type {
 } from "@/lib/matlab-api";
 
 import { categories, methods, describeResult } from "@/lib/enhancement-methods";
+import { ChoiceGroup } from "@/components/choice-group";
+import { StudioSelect } from "@/components/studio-select";
 import { Histogram } from "@/components/histogram";
 import { NoisePlayground } from "@/components/noise-playground";
 import { LearningAssistant } from "@/components/learning-assistant";
@@ -672,14 +674,14 @@ function LumaLab() {
           </span>
           <button
             type="button"
-            className="studio-button secondary"
+            className={`studio-button ${imageUrl ? "secondary" : "primary"} upload-action`}
             onClick={() => fileInputRef.current?.click()}
             disabled={sequenceRunning}
           >
             <Upload size={15} />
             <span>Upload image</span>
           </button>
-          {workspaceMode === "studio" && (
+          {workspaceMode === "studio" && imageUrl && (
             <button
               type="button"
               className="studio-button primary"
@@ -695,26 +697,38 @@ function LumaLab() {
 
       <div className="studio-content">
         <div className="workspace-heading">
-          <div></div>
-        </div>
-        <div className="workspace-modes segmented" role="group" aria-label="Workspace mode">
-          <button
-            aria-pressed={workspaceMode === "studio"}
-            onClick={() => setWorkspaceMode("studio")}
-            disabled={sequenceRunning}
-          >
-            Enhancement Studio
-          </button>
-          <button
-            aria-pressed={workspaceMode === "noise"}
-            onClick={() => {
-              setNoiseOpened(true);
-              setWorkspaceMode("noise");
-            }}
-            disabled={sequenceRunning}
-          >
-            Noise Playground
-          </button>
+          <div>
+            <p className="eyebrow">THE IMAGE LABORATORY</p>
+            <h1>
+              {imageUrl
+                ? "A new perspective on every pixel."
+                : "Start with an image. See what changes."}
+            </h1>
+            <p className="workspace-intro">
+              {imageUrl
+                ? "Choose a method, adjust its settings, and compare the result."
+                : "Upload an image → choose a method → compare and save."}
+            </p>
+          </div>
+          <div className="workspace-modes segmented" role="group" aria-label="Workspace mode">
+            <button
+              aria-pressed={workspaceMode === "studio"}
+              onClick={() => setWorkspaceMode("studio")}
+              disabled={sequenceRunning}
+            >
+              Enhancement Studio
+            </button>
+            <button
+              aria-pressed={workspaceMode === "noise"}
+              onClick={() => {
+                setNoiseOpened(true);
+                setWorkspaceMode("noise");
+              }}
+              disabled={sequenceRunning}
+            >
+              Noise Playground
+            </button>
+          </div>
         </div>
         {noiseOpened && (
           <div hidden={workspaceMode !== "noise"}>
@@ -733,98 +747,6 @@ function LumaLab() {
           </div>
         )}
         <div hidden={workspaceMode !== "studio"}>
-          <LearningAssistant
-            sourceKey={`${imageId ?? "empty"}:${sequenceInput?.imageId ?? "original"}:${latestNoise?.noisyImageId ?? "none"}`}
-            sourceLabel={sequenceInput?.label ?? fileName}
-            sequenceLength={sequenceSteps.length}
-            acceptDisabled={sequenceRunning || isProcessing || !imageId}
-            onAccept={(recommendation, mode) =>
-              acceptRecommendation(
-                recommendation,
-                mode,
-                sequenceInput && latestNoise?.noisyImageId !== sequenceInput.imageId
-                  ? null
-                  : latestNoise,
-              )
-            }
-            context={{
-              mode: "studio",
-              status: !imageId
-                ? "empty"
-                : isProcessing
-                  ? "processing"
-                  : errorMessage || (previewMode === "sequence" && sequenceError)
-                    ? "error"
-                    : hasCurrentResult
-                      ? "ready"
-                      : "stale",
-              selected: parameterError ? null : options,
-              sequence: sequenceSteps.map(({ category, method, parameters }) => ({
-                category,
-                method,
-                parameters,
-              })),
-              resultSequence:
-                result?.steps?.map(({ category, method, parameters }) => ({
-                  category,
-                  method,
-                  parameters,
-                })) ?? [],
-              resultOperation:
-                result && result.method !== "sequence" && result.method !== "noise"
-                  ? {
-                      category: result.category as "intensity" | "spatial",
-                      method: result.method,
-                      parameters: result.parameters,
-                    }
-                  : null,
-              workflow: previewMode,
-              sequenceInput: sequenceInput ? "noisy" : "original",
-              resultInput:
-                result?.method === "sequence" && sequenceResultInput ? "noisy" : "original",
-              noise: sequenceInput?.noise ?? null,
-              selectedNoise: sequenceInput ? (latestNoise?.noise ?? null) : null,
-              measurements: result
-                ? {
-                    original: measuredContext(
-                      source?.original ?? result.original,
-                      source?.histograms.original ?? result.histograms.original,
-                    ),
-                    ...(sequenceResultInput
-                      ? {
-                          noisy: measuredContext(
-                            sequenceResultInput.info,
-                            sequenceResultInput.histogram,
-                          ),
-                        }
-                      : {}),
-                    result: measuredContext(result.enhanced, result.histograms.enhanced),
-                  }
-                : {},
-            }}
-          />
-          <nav className="category-navigation" aria-label="Enhancement category">
-            <div className="category-choices">
-              {categories.map((item, index) => (
-                <button
-                  type="button"
-                  key={item.id}
-                  className="category-choice"
-                  aria-label={item.name}
-                  aria-pressed={category === item.id}
-                  disabled={sequenceRunning}
-                  onClick={() => {
-                    if (item.id !== category)
-                      chooseMethod(item.id === "intensity" ? "gamma" : "gaussian");
-                  }}
-                >
-                  <span className="category-number">0{index + 1}</span>
-                  {item.name}
-                </button>
-              ))}
-            </div>
-            <p>{categories.find((item) => item.id === category)!.description}</p>
-          </nav>
           {(errorMessage || health.status === "offline") && (
             <div className="studio-alert" role="alert">
               <span>{errorMessage || health.detail}</span>
@@ -853,7 +775,7 @@ function LumaLab() {
             </div>
           )}
 
-          <div className="studio-grid">
+          <div className={`studio-grid ${imageUrl ? "has-image" : "is-empty"}`}>
             <section className="inspect-column" aria-label="Image comparison and analysis">
               <div className="preview-card">
                 <div className="preview-toolbar">
@@ -861,6 +783,11 @@ function LumaLab() {
                     <FileImage size={15} />
                     <span title={fileName}>{fileName || "No image selected"}</span>
                     {isDemo && imageUrl && <span className="small-tag">SAMPLE</span>}
+                    {source && (
+                      <span className="file-dimensions">
+                        {source.original.width} × {source.original.height} px
+                      </span>
+                    )}
                   </div>
                   <div
                     className="segmented layout-switch"
@@ -888,6 +815,17 @@ function LumaLab() {
                 </div>
                 <div
                   className="comparison-stage checkerboard"
+                  data-dragging={isDropActive}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    setIsDropActive(true);
+                  }}
+                  onDragLeave={() => setIsDropActive(false)}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    setIsDropActive(false);
+                    openFile(event.dataTransfer.files[0]);
+                  }}
                   ref={stageRef}
                   onPointerMove={moveDivider}
                   onPointerUp={() => setIsDragging(false)}
@@ -960,7 +898,9 @@ function LumaLab() {
                     <div className="empty-stage">
                       <FileImage size={32} strokeWidth={1.2} />
                       <h2>Your next experiment starts here.</h2>
-                      <p>Bring in an image to explore light, contrast, and tone.</p>
+                      <p>
+                        Upload, choose a method, adjust, then compare. Your original stays safe.
+                      </p>
                       <button
                         type="button"
                         className="studio-button primary"
@@ -1136,7 +1076,49 @@ function LumaLab() {
                 <h2>Adjustments</h2>
                 <span className="eyebrow">01 — 03</span>
               </div>
-              <section className="load-section">
+              {!imageUrl && (
+                <div className="empty-workflow">
+                  <p>Three steps to your first experiment</p>
+                  <ol>
+                    <li>
+                      <span>01</span>
+                      <div>
+                        <strong>Choose an image</strong>
+                        <p>A photograph or a grayscale image works well.</p>
+                      </div>
+                    </li>
+                    <li>
+                      <span>02</span>
+                      <div>
+                        <strong>Explore one method</strong>
+                        <p>Start with gamma for brightness, or a filter for detail.</p>
+                      </div>
+                    </li>
+                    <li>
+                      <span>03</span>
+                      <div>
+                        <strong>Compare and save</strong>
+                        <p>See the effect beside your unchanged original.</p>
+                      </div>
+                    </li>
+                  </ol>
+                </div>
+              )}
+              <section
+                className={`load-section ${imageUrl ? "image-loaded" : ""}`}
+                data-dragging={isDropActive}
+                title="Upload image or drop a PNG or JPEG here to replace it"
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setIsDropActive(true);
+                }}
+                onDragLeave={() => setIsDropActive(false)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setIsDropActive(false);
+                  openFile(event.dataTransfer.files[0]);
+                }}
+              >
                 <h3 className="step-heading">
                   <span>01</span>Load your image
                 </h3>
@@ -1146,16 +1128,6 @@ function LumaLab() {
                   disabled={sequenceRunning}
                   data-dragging={isDropActive}
                   onClick={() => fileInputRef.current?.click()}
-                  onDragOver={(event) => {
-                    event.preventDefault();
-                    setIsDropActive(true);
-                  }}
-                  onDragLeave={() => setIsDropActive(false)}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    setIsDropActive(false);
-                    openFile(event.dataTransfer.files[0]);
-                  }}
                 >
                   <Upload size={18} strokeWidth={1.5} />
                   <span>
@@ -1200,30 +1172,49 @@ function LumaLab() {
                 )}
               </section>
 
+              <nav
+                className="category-navigation panel-categories"
+                aria-label="Enhancement category"
+              >
+                <div className="category-choices">
+                  {categories.map((item, index) => (
+                    <button
+                      type="button"
+                      key={item.id}
+                      className="category-choice"
+                      aria-label={item.name}
+                      aria-pressed={category === item.id}
+                      disabled={sequenceRunning}
+                      onClick={() => {
+                        if (item.id !== category)
+                          chooseMethod(item.id === "intensity" ? "gamma" : "gaussian");
+                      }}
+                    >
+                      <span className="category-number">0{index + 1}</span>
+                      {item.name}
+                    </button>
+                  ))}
+                </div>
+                <p>{categories.find((item) => item.id === category)!.description}</p>
+              </nav>
               <section className="method-section">
                 <h3 className="step-heading">
                   <span>02</span>Choose a method
                 </h3>
-                <div
-                  className={`segmented method-switch ${category === "spatial" ? "spatial-methods" : ""}`}
-                  role="group"
-                  aria-label="Enhancement method"
-                >
-                  {methods
+                <ChoiceGroup
+                  label="Enhancement method"
+                  value={method}
+                  disabled={!imageUrl || sequenceRunning}
+                  className={`method-switch ${category === "spatial" ? "spatial-methods" : ""}`}
+                  choices={methods
                     .filter((item) => item.category === category)
-                    .map((item) => (
-                      <button
-                        type="button"
-                        key={item.id}
-                        aria-label={item.name}
-                        aria-pressed={method === item.id}
-                        disabled={!imageUrl || sequenceRunning}
-                        onClick={() => chooseMethod(item.id)}
-                      >
-                        {item.short}
-                      </button>
-                    ))}
-                </div>
+                    .map((item) => ({
+                      value: item.id,
+                      label: item.short,
+                      accessibleLabel: item.name,
+                    }))}
+                  onChange={(value) => chooseMethod(value as Method)}
+                />
               </section>
 
               <section className="parameter-section">
@@ -1491,12 +1482,13 @@ function LumaLab() {
                 inputControls={
                   <div className="sequence-input-control">
                     <label htmlFor="sequence-input">Sequence input</label>
-                    <select
+                    <StudioSelect
                       id="sequence-input"
+                      label="Sequence input"
                       disabled={sequenceRunning}
                       value={sequenceInput?.imageId ?? "original"}
-                      onChange={(event) => {
-                        if (event.target.value === "original") {
+                      onChange={(value) => {
+                        if (value === "original") {
                           setSequenceInput(null);
                           updateSequence(sequenceSteps);
                         } else if (latestNoise) {
@@ -1504,19 +1496,27 @@ function LumaLab() {
                           updateSequence(sequenceSteps);
                         }
                       }}
-                    >
-                      <option value="original">Clean original</option>
-                      {sequenceInput && sequenceInput.imageId !== latestNoise?.noisyImageId && (
-                        <option value={sequenceInput.imageId} disabled>
-                          Reviewed noise · seed {sequenceInput.noise.seed} · unavailable
-                        </option>
-                      )}
-                      {latestNoise?.noisyImageId && (
-                        <option value={latestNoise.noisyImageId}>
-                          Noisy realization · seed {latestNoise.noise?.seed}
-                        </option>
-                      )}
-                    </select>
+                      options={[
+                        { value: "original", label: "Clean original" },
+                        ...(sequenceInput && sequenceInput.imageId !== latestNoise?.noisyImageId
+                          ? [
+                              {
+                                value: sequenceInput.imageId,
+                                label: `Reviewed noise · seed ${sequenceInput.noise.seed} · unavailable`,
+                                disabled: true,
+                              },
+                            ]
+                          : []),
+                        ...(latestNoise?.noisyImageId
+                          ? [
+                              {
+                                value: latestNoise.noisyImageId,
+                                label: `Noisy realization · seed ${latestNoise.noise?.seed}`,
+                              },
+                            ]
+                          : []),
+                      ]}
+                    />
                     {sequenceInput && <p className="filter-guidance">{sequenceInput.label}</p>}
                     {sequenceNotice && (
                       <p className="filter-guidance" role="status">
@@ -1624,6 +1624,76 @@ function LumaLab() {
               </div>
             </aside>
           </div>
+          <LearningAssistant
+            sourceKey={`${imageId ?? "empty"}:${sequenceInput?.imageId ?? "original"}:${latestNoise?.noisyImageId ?? "none"}`}
+            sourceLabel={sequenceInput?.label ?? fileName}
+            sequenceLength={sequenceSteps.length}
+            acceptDisabled={sequenceRunning || isProcessing || !imageId}
+            onAccept={(recommendation, mode) =>
+              acceptRecommendation(
+                recommendation,
+                mode,
+                sequenceInput && latestNoise?.noisyImageId !== sequenceInput.imageId
+                  ? null
+                  : latestNoise,
+              )
+            }
+            context={{
+              mode: "studio",
+              status: !imageId
+                ? "empty"
+                : isProcessing
+                  ? "processing"
+                  : errorMessage || (previewMode === "sequence" && sequenceError)
+                    ? "error"
+                    : hasCurrentResult
+                      ? "ready"
+                      : "stale",
+              selected: parameterError ? null : options,
+              sequence: sequenceSteps.map(({ category, method, parameters }) => ({
+                category,
+                method,
+                parameters,
+              })),
+              resultSequence:
+                result?.steps?.map(({ category, method, parameters }) => ({
+                  category,
+                  method,
+                  parameters,
+                })) ?? [],
+              resultOperation:
+                result && result.method !== "sequence" && result.method !== "noise"
+                  ? {
+                      category: result.category as "intensity" | "spatial",
+                      method: result.method,
+                      parameters: result.parameters,
+                    }
+                  : null,
+              workflow: previewMode,
+              sequenceInput: sequenceInput ? "noisy" : "original",
+              resultInput:
+                result?.method === "sequence" && sequenceResultInput ? "noisy" : "original",
+              noise: sequenceInput?.noise ?? null,
+              selectedNoise: sequenceInput ? (latestNoise?.noise ?? null) : null,
+              measurements: result
+                ? {
+                    original: measuredContext(
+                      source?.original ?? result.original,
+                      source?.histograms.original ?? result.histograms.original,
+                    ),
+                    ...(sequenceResultInput
+                      ? {
+                          noisy: measuredContext(
+                            sequenceResultInput.info,
+                            sequenceResultInput.histogram,
+                          ),
+                        }
+                      : {}),
+                    result: measuredContext(result.enhanced, result.histograms.enhanced),
+                  }
+                : {},
+            }}
+          />
         </div>
         <footer className="studio-footer">
           <span>

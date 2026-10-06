@@ -1,3 +1,4 @@
+import { ChoiceGroup } from "./choice-group";
 import type { SequenceRecommendation } from "@/lib/learning-context";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { addNoise, enhanceImage } from "@/lib/matlab-api";
@@ -169,51 +170,6 @@ export function NoisePlayground({
         Clean original → Add noise → Apply a filter. Each noise realization starts from the clean
         original. Saved studio sequences stay separate.
       </p>
-      <LearningAssistant
-        sourceKey={`${clean?.imageId ?? "empty"}:${noisy?.noisyImageId ?? "none"}`}
-        sourceLabel={`${fileName}${noisy?.noise ? ` · ${noisy.noise.type === "salt-pepper" ? `salt-and-pepper ${noisy.noise.density * 100}%` : `Gaussian σ ${noisy.noise.standardDeviation}`} · seed ${noisy.noise.seed}` : " · clean original"}`}
-        sequenceLength={sequenceLength}
-        acceptDisabled={!!busy || !ready}
-        {...(onAccept
-          ? {
-              onAccept: (recommendation: SequenceRecommendation, mode: "append" | "replace") =>
-                onAccept(recommendation, mode, noisy),
-            }
-          : {})}
-        context={{
-          mode: "noise",
-          status: !clean
-            ? "empty"
-            : busy
-              ? "processing"
-              : error
-                ? "error"
-                : noisy && currentNoise && (!filtered || currentFilter)
-                  ? "ready"
-                  : noisy
-                    ? "stale"
-                    : "empty",
-          selected: invalid ? null : options,
-          sequence: [],
-          resultSequence: [],
-          resultOperation: filtered
-            ? {
-                category: "spatial",
-                method: filtered.method as Method,
-                parameters: filtered.parameters,
-              }
-            : null,
-          noise: noisy?.noise ?? null,
-          selectedNoise: noise,
-          measurements: {
-            ...(clean ? { clean: measuredContext(clean.original, clean.histograms.original) } : {}),
-            ...(noisy ? { noisy: measuredContext(noisy.enhanced, noisy.histograms.enhanced) } : {}),
-            ...(filtered
-              ? { filtered: measuredContext(filtered.enhanced, filtered.histograms.enhanced) }
-              : {}),
-          },
-        }}
-      />
       {error && (
         <div className="studio-alert" role="alert">
           {error} Retry Add noise or Apply filter when MATLAB is ready.
@@ -223,7 +179,14 @@ export function NoisePlayground({
         <div className="inspect-column">
           <div className="preview-card">
             <div className="preview-toolbar">
-              <span>{fileName || "No image selected"}</span>
+              <span className="noise-file">
+                {fileName || "No image selected"}
+                {clean && (
+                  <small>
+                    {clean.original.width} × {clean.original.height} px
+                  </small>
+                )}
+              </span>
               <div className="segmented" role="group" aria-label="Noise comparison source">
                 <button
                   aria-pressed={comparison === "clean"}
@@ -345,16 +308,17 @@ export function NoisePlayground({
             <h3 className="step-heading">
               <span>01</span>Add controlled noise
             </h3>
-            <label htmlFor="noise-type">Noise type</label>
-            <select
-              id="noise-type"
+            <p className="choice-label">Noise type</p>
+            <ChoiceGroup
+              label="Noise type"
               value={type}
               disabled={!!busy}
-              onChange={(event) => setType(event.target.value as NoiseSettings["type"])}
-            >
-              <option value="salt-pepper">Salt-and-pepper</option>
-              <option value="gaussian">Gaussian</option>
-            </select>
+              choices={[
+                { value: "salt-pepper", label: "Salt & pepper" },
+                { value: "gaussian", label: "Gaussian" },
+              ]}
+              onChange={(value) => setType(value as NoiseSettings["type"])}
+            />
             <div className="control-label">
               <label htmlFor="noise-strength">
                 {type === "salt-pepper" ? "Noise density" : "Standard deviation (σ)"}
@@ -413,21 +377,17 @@ export function NoisePlayground({
             <h3 className="step-heading">
               <span>02</span>Filter the noisy input
             </h3>
-            <label htmlFor="noise-filter">Selected filter</label>
-            <select
-              id="noise-filter"
+            <p className="choice-label">Selected filter</p>
+            <ChoiceGroup
+              label="Selected filter"
               value={method}
               disabled={!!busy}
-              onChange={(event) => setMethod(event.target.value as Method)}
-            >
-              {methods
+              className="noise-filter-choices"
+              choices={methods
                 .filter((item) => ["mean", "gaussian", "median", "unsharp"].includes(item.id))
-                .map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-            </select>
+                .map((item) => ({ value: item.id, label: item.short, accessibleLabel: item.name }))}
+              onChange={(value) => setMethod(value as Method)}
+            />
             <FilterControls
               method={method}
               kernelSize={kernelSize}
@@ -457,7 +417,7 @@ export function NoisePlayground({
                 : "Generate noise first."}
             </p>
           </section>
-          <details className="learning-notes" open>
+          <details className="learning-notes">
             <summary>What to observe</summary>
             <div>
               <p>
@@ -518,6 +478,51 @@ export function NoisePlayground({
           </div>
         </aside>
       </div>
+      <LearningAssistant
+        sourceKey={`${clean?.imageId ?? "empty"}:${noisy?.noisyImageId ?? "none"}`}
+        sourceLabel={`${fileName}${noisy?.noise ? ` · ${noisy.noise.type === "salt-pepper" ? `salt-and-pepper ${noisy.noise.density * 100}%` : `Gaussian σ ${noisy.noise.standardDeviation}`} · seed ${noisy.noise.seed}` : " · clean original"}`}
+        sequenceLength={sequenceLength}
+        acceptDisabled={!!busy || !ready}
+        {...(onAccept
+          ? {
+              onAccept: (recommendation: SequenceRecommendation, mode: "append" | "replace") =>
+                onAccept(recommendation, mode, noisy),
+            }
+          : {})}
+        context={{
+          mode: "noise",
+          status: !clean
+            ? "empty"
+            : busy
+              ? "processing"
+              : error
+                ? "error"
+                : noisy && currentNoise && (!filtered || currentFilter)
+                  ? "ready"
+                  : noisy
+                    ? "stale"
+                    : "empty",
+          selected: invalid ? null : options,
+          sequence: [],
+          resultSequence: [],
+          resultOperation: filtered
+            ? {
+                category: "spatial",
+                method: filtered.method as Method,
+                parameters: filtered.parameters,
+              }
+            : null,
+          noise: noisy?.noise ?? null,
+          selectedNoise: noise,
+          measurements: {
+            ...(clean ? { clean: measuredContext(clean.original, clean.histograms.original) } : {}),
+            ...(noisy ? { noisy: measuredContext(noisy.enhanced, noisy.histograms.enhanced) } : {}),
+            ...(filtered
+              ? { filtered: measuredContext(filtered.enhanced, filtered.histograms.enhanced) }
+              : {}),
+          },
+        }}
+      />
     </section>
   );
 }

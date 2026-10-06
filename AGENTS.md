@@ -10,4 +10,5 @@
 <!-- LOVABLE:END -->
 
 ## Architecture decisions
-- Keep the interactive image laboratory on the index route and preserve its visual design. Enhancement runs through the local Node bridge and persistent MATLAB worker; base MATLAB algorithms do not require Image Processing Toolbox. Do not present browser previews as MATLAB results. Run the complete local app with `npm run dev:full`.
+- Keep the interactive image laboratory on the index route, with its charcoal/green studio design, selective glass panels, prominent comparison canvas, contextual method controls, and real image analysis. Enhancement runs through the local Node bridge and persistent MATLAB worker; base MATLAB algorithms do not require Image Processing Toolbox. Run the complete local app with `npm run dev:full`.
+- Use the shared `{imageId, category, method, parameters}` processing route. Keep Intensity Transformations and Spatial Filtering distinct, validate relevant parameters at both bridge and MATLAB boundaries, and preserve the original. Stretch cutoffs are normalized input brightness values, not percentiles. Spatial smoothing/sharpening uses replicated boundaries and RGB luminance; Sobel produces a labeled grayscale edge map. Histograms/statistics must describe the actual returned image. Do not present browser previews as MATLAB results.

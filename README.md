@@ -1,8 +1,10 @@
 # Pixel Perfect Pix
 
 LumaLab is a local image enhancement laboratory with a React/TanStack Start frontend
-and real MATLAB processing. Its original layout, upload control, presets, comparison
-views, histogram and statistics panels are retained.
+and real MATLAB processing. Its charcoal/green studio dashboard centers the image
+comparison, with selective glass panels, contextual adjustments, and actual image
+histograms/statistics. Intensity transformations change tones; spatial filters
+use neighboring pixels to smooth noise, sharpen detail, or reveal edges.
 
 This project was built with [Lovable](https://lovable.dev).
 
@@ -19,8 +21,8 @@ Continue developing this project in the [Lovable editor](https://lovable.dev/pro
 ## Development
 
 Use Node.js 22.13+ (22.x) or 24+, npm, and an activated MATLAB supporting `-batch`
-(R2019a+). **Image Processing Toolbox is optional**: the algorithms use base MATLAB
-matrix arithmetic, cumulative histograms, and native image I/O. No JavaScript or
+and function argument validation. **Image Processing Toolbox is optional**: the algorithms use base MATLAB
+matrix arithmetic, convolution, median, cumulative histograms, and native image I/O. No JavaScript or
 Python enhancement fallback is used.
 
 ```sh
@@ -52,6 +54,10 @@ MATLAB-capable server.
 
 ## Processing and interface
 
+- **Intensity Transformations** contains gamma, histogram equalization, and
+  contrast stretching. **Spatial Filtering** contains Mean, Gaussian, Median,
+  Unsharp Mask, and Sobel. Each category has a short explanation, and the optional
+  learning panel explains the selected operation and its neighborhood.
 - Upload PNG or JPEG (10 MiB maximum, one frame, up to 16 million pixels). The sample
   image is uploaded through the same MATLAB path. Unsupported/corrupt images receive
   an actionable error. Uploaded data and results live in an OS temporary folder,
@@ -65,8 +71,27 @@ MATLAB-capable server.
   preserving Cb/Cr before clipping to the representable RGB gamut. This avoids
   independently equalizing the three channels. See the [MathWorks color-space
   reference](https://www.mathworks.com/help/images/ref/rgb2ycbcr.html).
-- Contrast stretching maps observed minimum/maximum grayscale or luminance values
-  to 0–1, using the same chrominance handling for RGB.
+- Contrast stretching maps a selected input brightness range to 0–1:
+  `s = clip((r - low) / (high - low), 0, 1)`. The synchronized sliders and numeric
+  fields use percentages of brightness, **not percentiles**. Default cutoffs are
+  **10–90%**; Gentle uses 2–98%, Balanced 10–90%, and Strong 20–80%. Reset cutoffs
+  restores 10–90%. For a low-contrast image with tones around 40–60%, select that
+  range to see a stronger expansion. RGB uses the same luminance/chrominance
+  approach as equalization, retaining color before unavoidable gamut clipping.
+  Constant/near-constant images (luminance span ≤ 1e-6) stay unchanged. The frontend,
+  bridge, and MATLAB reject reversed, nonfinite, out-of-bounds, or effectively
+  zero-width ranges (minimum normalized span 1e-6).
+- Mean uses a normalized box kernel. Gaussian uses a normalized discrete Gaussian
+  kernel. Median takes the neighborhood median in bounded batches. Unsharp Mask
+  adds a scaled difference between the image and its Gaussian blur. Sobel computes
+  gradient magnitude with a fixed normalization and produces a clearly labeled
+  **grayscale edge map**, including for RGB input.
+- Spatial filters use replicated boundaries, work on tiny images, and accept only
+  3×3, 5×5, or 7×7 neighborhoods. Gaussian sigma is 0.3–3; sharpening strength is
+  0–3, with zero giving an exact identity. RGB smoothing/sharpening uses BT.601
+  luminance and adds its change to all channels, retaining chrominance before
+  clipping. This preserves color but does not remove purely chromatic noise.
+  No Image Processing Toolbox functions are called.
 - MATLAB functions preserve `uint8`, `uint16`, `int16`, `single`, `double`, and
   `logical` image classes and their standard ranges. Floating inputs must be finite
   and within 0–1. Indexed PNGs are expanded to RGB. PNG alpha is retained unchanged.
@@ -76,26 +101,55 @@ MATLAB-capable server.
   graph scale. Mean and population standard deviation use **all** pixels on a 0–255
   luminance scale, including transparent pixels' color values; alpha is ignored.
   Statistics also include dimensions, channel count, and numeric class in the API.
-- Slider changes are debounced by 350 ms. Obsolete responses cannot overwrite a
-  newer selection. Reset restores gamma 1, the original returned PNG, comparison
-  divider, and zoom. Save downloads the returned enhanced PNG and is disabled until
-  the current operation succeeds. Original previews are labeled honestly if MATLAB
-  is unavailable. Start/restart the backend, then use Retry processing if needed.
+- Only the chosen method's controls appear. Slider changes are debounced by 350 ms;
+  obsolete responses cannot overwrite a newer selection. While updating, the last
+  real result remains visible and is labeled as such. Reset restores gamma 1, the
+  original returned PNG, default cutoffs, split layout, divider, and zoom. Save
+  downloads the current enhanced PNG and is disabled until the selected operation
+  succeeds. Advanced neighborhood/sigma settings are collapsed by default. Reset
+  also returns to the intensity category and restores filter defaults. Edge-map
+  labels, histogram legends, and statistics headings identify Sobel output.
+  The divider supports dragging and Left/Right keys (Shift for 10% steps),
+  plus Home/End. Original previews are labeled honestly if MATLAB is unavailable.
+  Start/restart the backend, then use Retry processing if needed.
 
 ## Integration boundary
 
 `bridge/server.mjs` uses Node built-ins only and launches MATLAB with `spawn`
 (no shell). A private temporary directory holds atomic JSON job requests/responses.
 `matlab/lumalab_worker.m` handles them sequentially, calling `process_job.m`,
-`enhance_image.m`, and `image_analysis.m`. No engine bindings are required.
+`enhance_image.m` or `spatial_filter.m`, and `image_analysis.m`. No engine bindings
+are required. `bridge/processing.mjs` validates method/category/settings before
+queuing a job; MATLAB validates them again at the processing boundary.
 
 The implemented endpoints are:
 
-| Endpoint                   | Request / response                                                                           |
-| -------------------------- | -------------------------------------------------------------------------------------------- |
-| `GET /api/matlab/health`   | Actual worker status, MATLAB version, toolbox availability, recovery detail                  |
-| `POST /api/matlab/images`  | Raw `image/png` or `image/jpeg` bytes → upload ID and gamma-1 result                         |
-| `POST /api/matlab/process` | JSON `{imageId, method, gamma}` → enhanced/original PNG data URLs, histograms and statistics |
+| Endpoint                   | Request / response                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/matlab/health`   | Actual worker status, MATLAB version, toolbox availability, recovery detail                                         |
+| `POST /api/matlab/images`  | Raw `image/png` or `image/jpeg` bytes → upload ID and gamma-1 result                                                |
+| `POST /api/matlab/process` | JSON `{imageId, category, method, parameters}` → enhanced/original PNG data URLs, histograms and statistics |
+
+The shared request uses `category: "intensity"` or `"spatial"`. Only the selected
+method's parameters are accepted. Defaults are:
+
+| Method | Category | Parameters |
+| --- | --- | --- |
+| `gamma` | `intensity` | `{gamma: 1}` |
+| `equalize` | `intensity` | `{}` |
+| `stretch` | `intensity` | `{lowCutoff: 0.1, highCutoff: 0.9}` |
+| `mean`, `median` | `spatial` | `{kernelSize: 3}` |
+| `gaussian` | `spatial` | `{kernelSize: 5, sigma: 1}` |
+| `unsharp` | `spatial` | `{kernelSize: 5, sigma: 1, amount: 1}` |
+| `sobel` | `spatial` | `{}` |
+
+For example, `{imageId, category: "spatial", method: "gaussian", parameters:
+{kernelSize: 7, sigma: 1.6}}` requests the corresponding MATLAB blur. Cutoffs use
+normalized 0–1 brightness values. Legacy flat intensity requests remain supported,
+and an omitted category is inferred from the method. Responses include the actual
+`category`, `method`, `parameters`, and `outputKind` (`enhanced` or `edge-map`). All
+eight methods use the same MATLAB worker path. No new dependency was added for
+spatial filtering or the visual refinement.
 
 The service binds only to loopback, limits upload bytes and queued jobs, validates
 file signatures and parameters, and bounds startup (90 seconds) and processing
@@ -121,10 +175,28 @@ not checked); Image Processing Toolbox is not installed although its license che
 returned true. The base-MATLAB worker runs independently of that missing toolbox.
 
 Numeric tests cover gamma below/equal/above 1, class/range preservation, CDF mapping,
-constant images, RGB chrominance, full pixel counts and statistics, transparency,
-and 16-bit PNG identity. The API check uses `src/assets/lumalab-sample.jpg` and exercises
-the actual frontend proxy → Node → MATLAB path plus input failures. Component tests
-cover presets/equalization, reset, save URL selection, obsolete responses, and an
-unavailable bridge. The attachment available here contained only the request text,
-so the repository sample was used. A visual browser review and VS Code execution
-are not covered by these checks.
+selected stretch cutoffs, clipping, low-contrast grayscale/RGB, constant and
+near-constant images, invalid ranges, RGB chrominance, transparency, and 16-bit PNG
+identity. They independently recompute histograms and statistics from saved PNGs.
+Spatial tests verify impulse responses, replicated corners, Gaussian weights and
+sigma, salt-and-pepper removal, unsharp strength/identity, Sobel response, RGB
+chrominance, small images, supported classes, and invalid settings. They also
+process grayscale and RGB images, preserve 16-bit alpha, and independently analyze
+the saved outputs. The API check uses `src/assets/lumalab-sample.jpg` and exercises
+all eight methods through the actual frontend proxy → Node → MATLAB path plus
+input/category/settings failures. Seven routing/component tests cover presets,
+cutoff synchronization, categories, filter settings/validation, edge-map labeling,
+reset, save, obsolete responses, comparison, empty state, and an unavailable bridge.
+
+The supplied screenshot was not accessible, so the running app was inspected.
+Headless Chromium verification used MATLAB-generated low-contrast grayscale and RGB
+images: contrast deviation increased from about 14.8 to 73.9/73.7 with 40–60% cutoffs.
+Browser checks covered all eight methods, numeric/slider synchronization (including
+decimals), cutoff/filter errors, real download bytes matching the MATLAB response,
+reset, pointer/keyboard comparison, side-by-side mode, fit-to-view, and empty-image
+state. For every spatial filter on grayscale and RGB inputs, the browser separately
+recomputed the rendered image's histogram, mean, and deviation and matched MATLAB's
+response. Spatial requests on the 1536×1024 sample took approximately 0.6–2 seconds
+on this machine, including the 7×7 median window.
+Desktop/mobile rendering was visually reviewed; widths 320, 390, 768, and 1280 showed
+no horizontal overflow. VS Code execution remains outside these checks.

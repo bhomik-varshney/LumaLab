@@ -66,6 +66,89 @@ for (const gamma of [0, -1, "bad"]) {
   );
   assert.equal(response.status, 400);
 }
+for (const [method, parameters] of [
+  ["mean", { kernelSize: 3 }],
+  ["gaussian", { kernelSize: 5, sigma: 1 }],
+  ["median", { kernelSize: 3 }],
+  ["median", { kernelSize: 7 }],
+  ["unsharp", { kernelSize: 5, sigma: 1, amount: 1 }],
+  ["sobel", {}],
+]) {
+  const started = Date.now();
+  response = await fetch(
+    `${base}/process`,
+    json({ imageId: original.imageId, category: "spatial", method, parameters }),
+  );
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.category, "spatial");
+  assert.deepEqual(result.parameters, parameters);
+  assert.equal(result.enhanced.width, original.original.width);
+  assert.equal(result.enhanced.height, original.original.height);
+  assert.equal(
+    result.histograms.enhanced.reduce((sum, count) => sum + count, 0),
+    pixels,
+  );
+  assert(Number.isFinite(result.enhanced.mean) && Number.isFinite(result.enhanced.deviation));
+  if (method === "sobel") {
+    assert.equal(result.outputKind, "edge-map");
+    assert.equal(result.enhanced.channels, 1);
+  }
+  pngDigest(result.url);
+  assert.equal(pngDigest(result.originalUrl), pngDigest(original.originalUrl));
+  console.log(
+    `${method}: real MATLAB ${result.enhanced.channels}-channel output, ${Date.now() - started} ms`,
+  );
+}
+for (const input of [
+  { category: "intensity", method: "mean", parameters: { kernelSize: 3 } },
+  { category: "spatial", method: "mean", parameters: { kernelSize: 4 } },
+  { category: "spatial", method: "median", parameters: { kernelSize: 9 } },
+  { category: "spatial", method: "gaussian", parameters: { sigma: 0 } },
+  { category: "spatial", method: "gaussian", parameters: { sigma: 4 } },
+  { category: "spatial", method: "unsharp", parameters: { amount: -1 } },
+  { category: "spatial", method: "unsharp", parameters: { amount: 4 } },
+  { category: "spatial", method: "sobel", parameters: { kernelSize: 3 } },
+  { category: "spatial", method: "mean", parameters: [] },
+]) {
+  response = await fetch(`${base}/process`, json({ imageId: original.imageId, ...input }));
+  assert.equal(response.status, 400);
+  assert((await response.json()).error);
+}
+for (const [lowCutoff, highCutoff] of [
+  [0, 1],
+  [0.4, 0.6],
+]) {
+  response = await fetch(
+    `${base}/process`,
+    json({ imageId: original.imageId, method: "stretch", gamma: 1, lowCutoff, highCutoff }),
+  );
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.lowCutoff, lowCutoff);
+  assert.equal(result.highCutoff, highCutoff);
+  assert.equal(
+    result.histograms.enhanced.reduce((sum, count) => sum + count, 0),
+    pixels,
+  );
+  pngDigest(result.url);
+}
+for (const [lowCutoff, highCutoff] of [
+  [0.7, 0.3],
+  [0.5, 0.5],
+  [-0.1, 0.9],
+  [0.1, 1.1],
+  ["bad", 1],
+  [null, 1],
+  [0.5, 0.50000001],
+]) {
+  response = await fetch(
+    `${base}/process`,
+    json({ imageId: original.imageId, method: "stretch", gamma: 1, lowCutoff, highCutoff }),
+  );
+  assert.equal(response.status, 400);
+  assert((await response.json()).error.includes("Cutoffs"));
+}
 response = await fetch(`${base}/images`, {
   method: "POST",
   headers: { "Content-Type": "image/jpeg" },

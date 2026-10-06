@@ -5,42 +5,32 @@ import {
   ArrowLeftRight,
   Check,
   ChevronDown,
-  CircleHelp,
   FileImage,
-  ImagePlus,
   Maximize2,
   Minus,
   Plus,
   RotateCcw,
-  Sparkles,
   Upload,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import sampleImage from "@/assets/lumalab-sample.jpg";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-
 import { checkMatlab, uploadImage, enhanceImage } from "@/lib/matlab-api";
-import type { Health, Method, ProcessingResult } from "@/lib/matlab-api";
-type ViewMode = "split" | "side-by-side";
+import type { Health, Method, ProcessingResult, ProcessingOptions } from "@/lib/matlab-api";
 
-const methods: { id: Method; name: string; short: string }[] = [
-  { id: "gamma", name: "Gamma correction", short: "Gamma" },
-  { id: "equalize", name: "Histogram equalization", short: "Equalize" },
-  { id: "stretch", name: "Contrast stretching", short: "Stretch" },
+import { categories, methods, describeResult } from "@/lib/enhancement-methods";
+import { FilterControls, NeighborhoodDiagram } from "@/components/filter-controls";
+
+type ViewMode = "split" | "side-by-side";
+const gammaPresets = [
+  { label: "Brighten", value: "0.6" },
+  { label: "Neutral", value: "1" },
+  { label: "Darken", value: "1.8" },
 ];
-const presets = [
-  { label: "Brighten", value: 0.6 },
-  { label: "Neutral", value: 1 },
-  { label: "Darken", value: 1.8 },
+const stretchPresets = [
+  { label: "Gentle", low: "2", high: "98" },
+  { label: "Balanced", low: "10", high: "90" },
+  { label: "Strong", low: "20", high: "80" },
 ];
 
 export const Route = createFileRoute("/")({
@@ -50,36 +40,32 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "An interactive image enhancement laboratory for exploring gamma correction, histogram equalization, and contrast stretching.",
+          "A hands-on MATLAB image studio. Adjust tones, smooth noise, sharpen detail, and compare real images and histograms.",
       },
       { property: "og:title", content: "LumaLab — Image Enhancement Studio" },
-      {
-        property: "og:description",
-        content:
-          "Explore image enhancement with MATLAB processing, live histograms, and a hands-on comparison workspace.",
-      },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
   component: LumaLab,
 });
 
-function histogramPath(bins: number[], peak: number) {
-  return bins
-    .map(
-      (value, index) =>
-        `${index === 0 ? "M" : "L"}${(index / (bins.length - 1)) * 240},${84 - (value / peak) * 78}`,
-    )
-    .join(" ");
-}
-
 function LumaLab() {
   const [imageUrl, setImageUrl] = useState(sampleImage);
   const [fileName, setFileName] = useState("alpine-dawn-demo.jpg");
   const [isDemo, setIsDemo] = useState(true);
-  const [gamma, setGamma] = useState(1);
+  const [gammaValue, setGammaValue] = useState("1");
+  const [lowValue, setLowValue] = useState("10");
+  const [highValue, setHighValue] = useState("90");
+  const [kernelSize, setKernelSize] = useState(5);
+  const [sigmaValue, setSigmaValue] = useState("1");
+  const [amountValue, setAmountValue] = useState("1");
+  const sigma = sigmaValue.trim() === "" ? NaN : Number(sigmaValue);
+  const amount = amountValue.trim() === "" ? NaN : Number(amountValue);
+  const gamma = gammaValue.trim() === "" ? NaN : Number(gammaValue);
+  const low = lowValue.trim() === "" ? NaN : Number(lowValue);
+  const high = highValue.trim() === "" ? NaN : Number(highValue);
   const [method, setMethod] = useState<Method>("gamma");
+  const selected = methods.find((item) => item.id === method)!;
+  const category = selected.category;
   const [result, setResult] = useState<ProcessingResult | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [imageFile, setImageFile] = useState<Blob | null>(null);
@@ -90,15 +76,31 @@ function LumaLab() {
   });
   const [retry, setRetry] = useState(0);
   const neutralResult = useRef<ProcessingResult | null>(null);
+  const sampleLoader = useRef<AbortController | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("split");
   const [split, setSplit] = useState(50);
   const [zoom, setZoom] = useState(100);
   const [isDragging, setIsDragging] = useState(false);
   const [isDropActive, setIsDropActive] = useState(false);
-  const [aboutOpen, setAboutOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const parameterError =
+    method === "stretch" &&
+    (!Number.isFinite(low) ||
+      !Number.isFinite(high) ||
+      low < 0 ||
+      high > 100 ||
+      high - low < 0.0001)
+      ? "Low cutoff must be below high cutoff. Use values from 0 to 100%."
+      : method === "gamma" && (!Number.isFinite(gamma) || gamma < 0.2 || gamma > 3)
+        ? "Choose a gamma value between 0.2 and 3."
+        : (method === "gaussian" || method === "unsharp") &&
+            (!Number.isFinite(sigma) || sigma < 0.3 || sigma > 3)
+          ? "Choose a Gaussian sigma between 0.3 and 3."
+          : method === "unsharp" && (!Number.isFinite(amount) || amount < 0 || amount > 3)
+            ? "Choose a sharpening strength between 0 and 3."
+            : "";
 
   useEffect(() => {
     let active = true;
@@ -120,12 +122,15 @@ function LumaLab() {
 
   useEffect(() => {
     const controller = new AbortController();
+    sampleLoader.current = controller;
     fetch(sampleImage, { signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error("Could not load the sample image.");
         return response.blob();
       })
-      .then((blob) => setImageFile((current) => current ?? blob))
+      .then((blob) => {
+        if (!controller.signal.aborted) setImageFile((current) => current ?? blob);
+      })
       .catch((error: Error) => {
         if (!controller.signal.aborted) setErrorMessage(error.message);
       });
@@ -159,15 +164,37 @@ function LumaLab() {
         setIsProcessing(false);
       })
       .catch((error: Error) => {
-        if (controller.signal.aborted) return;
-        setErrorMessage(error.message);
-        setIsProcessing(false);
+        if (!controller.signal.aborted) {
+          setErrorMessage(error.message);
+          setIsProcessing(false);
+        }
       });
     return () => controller.abort();
   }, [imageFile, health.status, retry]);
 
+  // Only parameters for the active method trigger processing. Draft numeric input
+  // can be invalid temporarily; it never reaches MATLAB or enables export.
+  const options = useMemo<ProcessingOptions>(() => {
+    const parameters =
+      method === "gamma"
+        ? { gamma }
+        : method === "stretch"
+          ? { lowCutoff: low / 100, highCutoff: high / 100 }
+          : method === "mean" || method === "median"
+            ? { kernelSize }
+            : method === "gaussian"
+              ? { kernelSize, sigma }
+              : method === "unsharp"
+                ? { kernelSize, sigma, amount }
+                : {};
+    return { category, method, parameters };
+  }, [category, method, gamma, low, high, kernelSize, sigma, amount]);
   useEffect(() => {
     if (!imageId || health.status !== "ready") return;
+    if (parameterError) {
+      setIsProcessing(false);
+      return;
+    }
     const controller = new AbortController();
     setErrorMessage("");
     if (method === "gamma" && gamma === 1 && neutralResult.current) {
@@ -175,10 +202,9 @@ function LumaLab() {
       setIsProcessing(false);
       return () => controller.abort();
     }
-    setResult(null);
     setIsProcessing(true);
     const timer = setTimeout(() => {
-      enhanceImage(imageId, method, gamma, controller.signal)
+      enhanceImage(imageId, options, controller.signal)
         .then((output) => {
           if (!controller.signal.aborted) {
             setResult(output);
@@ -196,29 +222,65 @@ function LumaLab() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [imageId, method, gamma, health.status]);
+  }, [imageId, options, method, gamma, health.status, parameterError]);
 
-  const histograms = result?.histograms ?? { original: [], enhanced: [] };
-  const histogramPeak = Math.max(...histograms.original, ...histograms.enhanced, 1);
   const hasCurrentResult =
-    !!result && result.method === method && (method !== "gamma" || result.gamma === gamma);
+    !!result &&
+    !parameterError &&
+    result.method === method &&
+    result.category === category &&
+    Object.entries(options.parameters).every(
+      ([key, value]) => result.parameters[key as keyof typeof result.parameters] === value,
+    );
+  const canAdjust = !!imageFile && !!imageId && health.status === "ready";
+  const canSave = hasCurrentResult && !isProcessing && health.status === "ready";
+  const source = neutralResult.current;
+  const selectedMethod = selected.name;
   const statusText =
     health.status === "ready"
-      ? "MATLAB connected"
+      ? "MATLAB ready"
       : health.status === "starting"
-        ? "MATLAB starting…"
+        ? "Connecting to MATLAB"
         : "MATLAB unavailable";
+  const explanation = selected.explanation;
+  const previewStatus = isProcessing
+    ? "Processing in MATLAB…"
+    : hasCurrentResult
+      ? "MATLAB PROCESSED"
+      : result
+        ? "Previous result · adjust to update"
+        : "Original preview";
+  const enhancedLabel = hasCurrentResult
+    ? result?.outputKind === "edge-map"
+      ? "EDGE MAP"
+      : "ENHANCED"
+    : result
+      ? result.outputKind === "edge-map"
+        ? "LAST EDGE MAP"
+        : "LAST RESULT"
+      : "ORIGINAL PREVIEW";
+  const resultParameters = result ? describeResult(result) : "Awaiting MATLAB";
+  const chooseMethod = (next: Method) => {
+    if (next === method) return;
+    setMethod(next);
+    if (methods.find((item) => item.id === next)?.category === "spatial") {
+      setKernelSize(next === "mean" || next === "median" ? 3 : 5);
+      setSigmaValue("1");
+      setAmountValue("1");
+    }
+  };
 
   const openFile = (file?: File) => {
     if (!file) return;
     if (!/^image\/(png|jpeg)$/.test(file.type)) {
-      setErrorMessage("That format is not supported. Choose a PNG, JPG, or JPEG image.");
+      setErrorMessage("Choose a PNG or JPEG image.");
       return;
     }
     if (file.size > 10 * 1024 * 1024) {
-      setErrorMessage("Image is too large. Choose a file under 10 MB and 16 million pixels.");
+      setErrorMessage("Choose a file under 10 MB and 16 million pixels.");
       return;
     }
+    sampleLoader.current?.abort();
     setImageId(null);
     setResult(null);
     neutralResult.current = null;
@@ -226,727 +288,863 @@ function LumaLab() {
     setFileName(file.name);
     setIsDemo(false);
     setErrorMessage("");
-    setGamma(1);
+    setGammaValue("1");
+    setLowValue("10");
+    setHighValue("90");
     setMethod("gamma");
+    setKernelSize(5);
+    setSigmaValue("1");
+    setAmountValue("1");
     setZoom(100);
+    setSplit(50);
   };
-
   const resetImage = () => {
-    setGamma(1);
+    setGammaValue("1");
+    setLowValue("10");
+    setHighValue("90");
     setMethod("gamma");
+    setKernelSize(5);
+    setSigmaValue("1");
+    setAmountValue("1");
     setSplit(50);
     setZoom(100);
+    setViewMode("split");
+    setErrorMessage("");
   };
-
-  const selectedMethod = methods.find((item) => item.id === method)?.name ?? "Gamma correction";
-  const explanation = useMemo(() => {
-    if (method === "gamma") {
-      if (gamma < 1) return "Midtone pixels are brightened; shadow detail becomes easier to see.";
-      if (gamma > 1) return "Midtone pixels are darkened; highlights stay more visible.";
-      return "At γ = 1, each normalized input intensity maps to itself.";
-    }
-    if (method === "equalize")
-      return "The cumulative luminance histogram redistributes tones for greater global contrast.";
-    return "The darkest and brightest luminance values are mapped across the full display range.";
-  }, [gamma, method]);
-
-  const handleStagePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+  const removeImage = () => {
+    sampleLoader.current?.abort();
+    setImageFile(null);
+    setImageUrl("");
+    setFileName("");
+    setImageId(null);
+    setResult(null);
+    neutralResult.current = null;
+    setErrorMessage("");
+    setIsProcessing(false);
+    resetImage();
+  };
+  const saveImage = () => {
+    if (!result || !canSave) return;
+    const link = document.createElement("a");
+    link.href = result.url;
+    link.download = `${fileName.replace(/\.[^.]+$/, "")}-${result.method}.png`;
+    link.click();
+  };
+  const moveDivider = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!isDragging || !stageRef.current) return;
     const bounds = stageRef.current.getBoundingClientRect();
     setSplit(Math.min(100, Math.max(0, ((event.clientX - bounds.left) / bounds.width) * 100)));
   };
-
   const imageCompare = (enhanced: boolean) => (
     <img
       src={
         enhanced
-          ? hasCurrentResult
-            ? result?.url
-            : imageUrl
-          : (neutralResult.current?.originalUrl ?? imageUrl)
+          ? (result?.url ?? source?.originalUrl ?? imageUrl)
+          : (source?.originalUrl ?? imageUrl)
       }
-      alt={enhanced ? "Enhanced image preview" : "Original image preview"}
-      className="absolute inset-0 m-auto h-full w-full select-none object-contain transition-[filter] duration-200"
+      alt={
+        enhanced
+          ? result?.outputKind === "edge-map"
+            ? "Sobel edge map preview"
+            : "Enhanced image preview"
+          : "Original image preview"
+      }
       draggable={false}
+      className="comparison-image"
+      style={{ transform: `scale(${zoom / 100})` }}
     />
   );
 
   return (
-    <main className="lab-shell">
-      <header className="topbar grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-5 sm:px-8">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="grid h-9 w-9 shrink-0 place-items-center border border-lab/40 text-lab">
-            <Aperture size={19} strokeWidth={1.6} />
+    <main className="studio-shell">
+      <header className="studio-header">
+        <a href="/" className="studio-brand" aria-label="LumaLab home">
+          <span className="brand-mark">
+            <Aperture size={21} strokeWidth={1.5} />
           </span>
-          <div className="min-w-0 flex items-baseline gap-3">
-            <span className="font-display text-2xl leading-none text-foreground">LumaLab</span>
-            <span className="hidden truncate text-xs text-muted-foreground sm:block">
-              Image Enhancement Studio
+          <span>
+            LumaLab
+            <span className="brand-subtitle">
+              <span className="desktop-subtitle">IMAGE ENHANCEMENT STUDIO</span>
+              <span className="mobile-subtitle">IMAGE STUDIO</span>
             </span>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-3 sm:gap-5">
-          <span className="hidden items-center gap-2 text-[10px] font-semibold tracking-[0.13em] text-muted-foreground md:inline-flex">
-            <span className="h-1.5 w-1.5 rounded-full bg-lab-dim" />
-            LOCAL WORKSPACE
           </span>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-9 border-border bg-transparent text-foreground hover:bg-accent"
+        </a>
+        <div className="header-actions">
+          <span
+            className={`connection-pill ${health.status === "ready" ? "is-ready" : ""}`}
+            title={health.detail}
+            role="status"
+          >
+            <span className="status-dot" />
+            {statusText}
+          </span>
+          <button
+            type="button"
+            className="studio-button secondary"
             onClick={() => fileInputRef.current?.click()}
           >
-            <ImagePlus size={15} />
-            New image
-          </Button>
-          <Dialog open={aboutOpen} onOpenChange={setAboutOpen}>
-            <DialogTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-9 w-9 text-muted-foreground"
-                aria-label="About LumaLab"
-                title="About LumaLab"
-              >
-                <CircleHelp size={17} />
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="border-border bg-popover text-foreground sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle className="font-display text-2xl">About this lab</DialogTitle>
-                <DialogDescription className="pt-2 leading-6">
-                  LumaLab is an interactive teaching workspace for exploring how intensity
-                  transforms change an image and its luminance distribution.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="border-t border-border pt-4 text-sm leading-6 text-muted-foreground">
-                Images are sent to a local service and processed by MATLAB. The algorithms also work
-                without Image Processing Toolbox. Uploaded originals remain unchanged. Histograms
-                and statistics use all grayscale or BT.601 luminance pixels, excluding alpha.
-              </div>
-            </DialogContent>
-          </Dialog>
+            <Upload size={15} />
+            <span>Upload image</span>
+          </button>
+          <button
+            type="button"
+            className="studio-button primary"
+            onClick={saveImage}
+            disabled={!canSave}
+          >
+            <ArrowDownToLine size={15} />
+            <span>Save image</span>
+          </button>
         </div>
       </header>
 
-      <div className="workspace-grid">
-        <aside className="control-column bg-panel px-5 py-6 sm:px-6">
-          <SectionTitle number="01" title="Image" />
-          <button
-            type="button"
-            className="drop-target mt-4 flex w-full flex-col items-center justify-center gap-2 border border-dashed border-border px-3 py-5 text-center focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            data-dragging={isDropActive}
-            onClick={() => fileInputRef.current?.click()}
-            onDragOver={(event) => {
-              event.preventDefault();
-              setIsDropActive(true);
-            }}
-            onDragLeave={() => setIsDropActive(false)}
-            onDrop={(event) => {
-              event.preventDefault();
-              setIsDropActive(false);
-              openFile(event.dataTransfer.files[0]);
-            }}
-          >
-            <Upload className="text-muted-foreground" size={18} strokeWidth={1.5} />
-            <span className="text-xs font-medium">
-              Drop an image, or <span className="text-lab">browse</span>
-            </span>
-            <span className="text-[10px] text-muted-foreground">PNG · JPG · JPEG · Max 10 MB</span>
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/png,image/jpeg,.jpg,.jpeg"
-            className="sr-only"
-            onChange={(event) => {
-              openFile(event.target.files?.[0]);
-              event.currentTarget.value = "";
-            }}
-          />
-          <div className="mt-4 flex min-w-0 items-center gap-2">
-            <FileImage size={15} className="shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate text-xs text-foreground" title={fileName}>
-              {fileName}
-            </span>
-            {isDemo && (
-              <span className="shrink-0 text-[9px] tracking-wider text-lab-dim">DEMO</span>
-            )}
-            {!isDemo && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 shrink-0 text-muted-foreground"
-                onClick={() => fileInputRef.current?.click()}
-                title="Replace image"
-                aria-label="Replace image"
-              >
-                <RotateCcw size={14} />
-              </Button>
-            )}
+      <div className="studio-content">
+        <div className="workspace-heading">
+          <div>
+            <p className="eyebrow">THE IMAGE LAB / WORKSPACE</p>
+            <h1>See the difference.</h1>
+            <p className="workspace-intro">Adjust tones. Smooth noise. Bring out detail.</p>
           </div>
-          {result && (
-            <p className="mt-1 pl-[22px] text-[10px] text-muted-foreground">
-              {result.original.width} × {result.original.height} px
-            </p>
-          )}
-
-          <div className="my-6 border-t border-border" />
-          <SectionTitle number="02" title="Enhancement" />
-          <div className="mt-4 flex flex-col gap-1" role="group" aria-label="Enhancement method">
-            {methods.map((item) => (
-              <Button
+          <span className="workspace-hint">Load. Adjust. Compare.</span>
+        </div>
+        <nav className="category-navigation" aria-label="Enhancement category">
+          <div className="category-choices">
+            {categories.map((item, index) => (
+              <button
+                type="button"
                 key={item.id}
-                variant="ghost"
-                className={`h-9 w-full justify-between rounded-sm px-2.5 text-xs ${method === item.id ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                onClick={() => setMethod(item.id)}
-                aria-pressed={method === item.id}
-              >
-                <span className="flex items-center gap-2">
-                  <span
-                    className={`h-1.5 w-1.5 rounded-full ${method === item.id ? "bg-lab" : "bg-transparent"}`}
-                  />
-                  {item.name}
-                </span>
-                {method === item.id && <Check size={13} className="text-lab" />}
-              </Button>
-            ))}
-          </div>
-
-          <div className="my-5 border-t border-border" />
-          <div className="flex items-baseline justify-between gap-2">
-            <label htmlFor="gamma" className="text-xs font-medium text-foreground">
-              Gamma value
-            </label>
-            <span className="font-mono text-sm tabular-nums text-lab" aria-live="polite">
-              γ {gamma.toFixed(2)}
-            </span>
-          </div>
-          <input
-            id="gamma"
-            aria-label="Gamma value"
-            type="range"
-            min="0.2"
-            max="3"
-            step="0.05"
-            value={gamma}
-            disabled={method !== "gamma"}
-            onChange={(event) => setGamma(Number(event.target.value))}
-            className="range-control mt-4 h-1 w-full cursor-pointer disabled:cursor-not-allowed disabled:opacity-35"
-          />
-          <div className="mt-1 flex justify-between font-mono text-[10px] text-muted-foreground">
-            <span>0.20</span>
-            <span>3.00</span>
-          </div>
-          <div className="mt-3 grid grid-cols-3 gap-1.5">
-            {presets.map((preset) => (
-              <Button
-                key={preset.label}
-                variant="outline"
-                size="sm"
+                className="category-choice"
+                aria-label={item.name}
+                aria-pressed={category === item.id}
                 onClick={() => {
-                  setMethod("gamma");
-                  setGamma(preset.value);
+                  if (item.id !== category)
+                    chooseMethod(item.id === "intensity" ? "gamma" : "gaussian");
                 }}
-                className={`h-8 border-border bg-transparent px-1 text-[10px] font-normal ${method === "gamma" && gamma === preset.value ? "border-lab/55 text-lab" : "text-muted-foreground hover:text-foreground"}`}
               >
-                {preset.label}
-              </Button>
+                <span className="category-number">0{index + 1}</span>
+                {item.name}
+              </button>
             ))}
           </div>
-          {method === "gamma" && (
-            <p className="mt-3 text-[11px] leading-5 text-muted-foreground">
-              Below 1 brightens midtones; above 1 darkens them.
-            </p>
-          )}
-
-          <details className="group mt-5 border-t border-border pt-3">
-            <summary className="flex cursor-pointer items-center justify-between py-1 text-xs text-muted-foreground hover:text-foreground">
-              <span className="flex items-center gap-2">
-                <Sparkles size={13} />
-                Transformation notes
-              </span>
-              <ChevronDown size={13} className="transition-transform group-open:rotate-180" />
-            </summary>
-            <div className="mt-2 space-y-2 pb-2 text-[11px] leading-5 text-muted-foreground">
-              {method === "gamma" ? (
-                <>
-                  <p>
-                    Input intensity <i>r</i> is normalized to [0, 1]. The transform applies{" "}
-                    <span className="font-mono text-foreground">
-                      s = r<sup>γ</sup>
-                    </span>
-                    , then scales the output back to its display range.
-                  </p>
-                  <p>Values below 1 brighten midtones; values above 1 darken them.</p>
-                </>
-              ) : method === "equalize" ? (
-                <p>
-                  MATLAB equalizes the 256-bin cumulative histogram. RGB adjusts BT.601 luminance
-                  while preserving chrominance before clipping; saturated colors can be affected.
-                </p>
-              ) : (
-                <p>
-                  Contrast stretching maps the observed darkest and brightest luminance values to
-                  the full output range of 0–255.
-                </p>
-              )}
-              <p className="border-t border-border pt-2 text-[10px]">
-                MATLAB processes the full-resolution image. Histograms use 256 luminance bins;
-                statistics use a 0–255 scale and population standard deviation.
-              </p>
-            </div>
-          </details>
-
-          <div className="mt-6 flex items-center gap-2 border-t border-border pt-4">
-            <span
-              className={`h-1.5 w-1.5 rounded-full ${health.status === "ready" ? "bg-lab" : "bg-muted-foreground"}`}
-            />
-            <span className="text-[10px] text-muted-foreground" role="status">
-              {statusText}
-            </span>
-          </div>
-          {health.status !== "ready" && (
-            <p role="status" className="mt-2 text-[11px] leading-5 text-muted-foreground">
-              {health.detail}
-            </p>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="mt-2 h-7 text-[10px] text-muted-foreground"
-            onClick={() => setRetry((value) => value + 1)}
-            disabled={health.status !== "ready" || isProcessing}
-          >
-            Retry processing
-          </Button>
-          <div className="mt-4 grid grid-cols-2 gap-2">
-            <Button
-              variant="outline"
-              onClick={resetImage}
-              className="h-9 border-border bg-transparent text-xs text-muted-foreground hover:text-foreground"
-            >
-              <RotateCcw size={13} />
-              Reset
-            </Button>
-            <Button
-              onClick={() => {
-                if (result) {
-                  const link = document.createElement("a");
-                  link.href = result.url;
-                  link.download = `${fileName.replace(/\.[^.]+$/, "")}-enhanced.png`;
-                  link.click();
-                }
-              }}
-              disabled={!hasCurrentResult || isProcessing || health.status !== "ready"}
-              className="h-9 bg-lab text-xs text-primary-foreground hover:bg-lab/90"
-            >
-              <ArrowDownToLine size={14} />
-              Save image
-            </Button>
-          </div>
-        </aside>
-
-        <section className="image-column min-w-0 px-4 py-5 sm:px-7 sm:py-7">
-          <div className="mb-5 flex min-w-0 items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold tracking-[0.16em] text-muted-foreground">
-                IMAGE WORKSPACE <span className="px-1.5 text-border">/</span>{" "}
-                <span className="text-lab-dim">{selectedMethod.toUpperCase()}</span>
-              </p>
-              <h1 className="mt-1 truncate font-display text-2xl text-foreground sm:text-3xl">
-                Compare &amp; explore
-              </h1>
-            </div>
-            <div
-              className="flex shrink-0 items-center gap-1 border border-border p-1"
-              role="group"
-              aria-label="Comparison layout"
-            >
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setViewMode("split")}
-                aria-pressed={viewMode === "split"}
-                className={`h-7 gap-1.5 rounded-none px-2 text-[10px] ${viewMode === "split" ? "bg-accent text-foreground" : "text-muted-foreground"}`}
-              >
-                <ArrowLeftRight size={13} />
-                Split
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setViewMode("side-by-side")}
-                aria-pressed={viewMode === "side-by-side"}
-                className={`h-7 rounded-none px-2 text-[10px] ${viewMode === "side-by-side" ? "bg-accent text-foreground" : "text-muted-foreground"}`}
-              >
-                Side by side
-              </Button>
-            </div>
-          </div>
-
-          <div
-            className="stage-frame checkerboard relative flex items-center justify-center overflow-hidden border border-border"
-            ref={stageRef}
-            onPointerMove={handleStagePointerMove}
-            onPointerUp={() => setIsDragging(false)}
-            onPointerLeave={() => setIsDragging(false)}
-          >
-            {imageUrl ? (
-              <>
-                {viewMode === "split" ? (
-                  <div
-                    className="relative h-full min-h-[inherit] w-full overflow-hidden"
-                    style={{ minHeight: "inherit" }}
-                  >
-                    <div className="absolute inset-0" style={{ transform: `scale(${zoom / 100})` }}>
-                      {imageCompare(true)}
-                    </div>
-                    <div
-                      className="absolute inset-0"
-                      style={{
-                        clipPath: `inset(0 ${100 - split}% 0 0)`,
-                        transform: `scale(${zoom / 100})`,
-                      }}
-                    >
-                      {imageCompare(false)}
-                    </div>
-                    <span className="absolute left-3 top-3 z-10 border border-border/70 bg-background/90 px-2 py-1 text-[9px] font-semibold tracking-[0.12em] text-foreground">
-                      ORIGINAL
-                    </span>
-                    <span className="absolute right-3 top-3 z-10 border border-border/70 bg-background/90 px-2 py-1 text-[9px] font-semibold tracking-[0.12em] text-foreground">
-                      ENHANCED
-                    </span>
-                    <div
-                      className="absolute bottom-0 top-0 z-20 w-px cursor-ew-resize bg-lab"
-                      style={{ left: `${split}%` }}
-                      onPointerDown={(event) => {
-                        event.currentTarget.setPointerCapture(event.pointerId);
-                        setIsDragging(true);
-                      }}
-                      role="separator"
-                      aria-label="Drag to compare original and enhanced image"
-                      aria-orientation="vertical"
-                    />
-                    <button
-                      type="button"
-                      className="absolute top-1/2 z-20 grid h-8 w-8 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-lab/80 bg-background text-lab shadow-sm"
-                      style={{ left: `${split}%` }}
-                      onPointerDown={(event) => {
-                        event.currentTarget.setPointerCapture(event.pointerId);
-                        setIsDragging(true);
-                      }}
-                      aria-label="Drag image comparison divider"
-                    >
-                      <ArrowLeftRight size={14} />
-                    </button>
-                  </div>
-                ) : (
-                  <div className="grid h-full min-h-[inherit] w-full grid-cols-2 gap-px bg-border">
-                    {[
-                      { label: "ORIGINAL", enhanced: false },
-                      { label: "ENHANCED", enhanced: true },
-                    ].map((item) => (
-                      <div
-                        key={item.label}
-                        className="checkerboard relative flex min-w-0 items-center justify-center overflow-hidden"
-                      >
-                        <div
-                          className="absolute inset-0"
-                          style={{ transform: `scale(${zoom / 100})` }}
-                        >
-                          {imageCompare(item.enhanced)}
-                        </div>
-                        <span className="absolute left-2 top-2 z-10 border border-border/70 bg-background/90 px-1.5 py-1 text-[8px] font-semibold tracking-[0.1em] text-foreground sm:left-3 sm:top-3 sm:px-2 sm:text-[9px]">
-                          {item.label}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="mx-auto flex max-w-sm flex-col items-center px-6 py-16 text-center">
-                <FileImage size={33} strokeWidth={1} className="mb-5 text-muted-foreground" />
-                <h2 className="font-display text-2xl text-foreground">
-                  Bring an image into the lab
-                </h2>
-                <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                  Explore how intensity transformations change brightness, contrast, and pixel
-                  distributions.
-                </p>
-                <Button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="mt-5 bg-lab text-primary-foreground hover:bg-lab/90"
+          <p>{categories.find((item) => item.id === category)!.description}</p>
+        </nav>
+        {(errorMessage || health.status === "offline") && (
+          <div className="studio-alert" role="alert">
+            <span>{errorMessage || health.detail}</span>
+            <div className="alert-actions">
+              {health.status === "ready" && (
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => setRetry((value) => value + 1)}
+                  disabled={isProcessing || !!parameterError}
                 >
-                  <Upload size={15} />
-                  Choose image
-                </Button>
-                <p className="mt-4 text-[10px] text-muted-foreground">PNG · JPG · JPEG</p>
-              </div>
-            )}
-            {isProcessing && (
-              <div className="absolute inset-0 z-30 grid place-items-center bg-background/65">
-                <div className="flex items-center gap-2 border border-border bg-panel px-4 py-3 text-xs text-foreground">
-                  <span className="h-2 w-2 animate-pulse rounded-full bg-lab" />
-                  Processing in MATLAB…
-                </div>
-              </div>
-            )}
-            {errorMessage && (
-              <div
-                role="alert"
-                className="absolute bottom-3 left-3 right-3 z-40 flex items-center justify-between gap-3 border border-destructive/40 bg-background px-3 py-2 text-xs text-foreground"
-              >
-                <span>{errorMessage}</span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 shrink-0 text-muted-foreground"
+                  Retry processing
+                </button>
+              )}
+              {errorMessage && (
+                <button
+                  type="button"
+                  className="icon-button"
                   onClick={() => setErrorMessage("")}
                   aria-label="Dismiss message"
                 >
-                  <X size={13} />
-                </Button>
-              </div>
-            )}
-          </div>
-
-          {viewMode === "split" && (
-            <div className="mt-4 flex items-center gap-3">
-              <span className="w-12 shrink-0 text-[9px] font-semibold tracking-wider text-muted-foreground">
-                BEFORE
-              </span>
-              <input
-                aria-label="Image comparison divider"
-                type="range"
-                min="0"
-                max="100"
-                value={split}
-                onChange={(event) => setSplit(Number(event.target.value))}
-                className="range-control h-1 min-w-0 flex-1 cursor-ew-resize"
-              />
-              <span className="w-12 shrink-0 text-right text-[9px] font-semibold tracking-wider text-muted-foreground">
-                AFTER
-              </span>
-              <div className="ml-1 flex shrink-0 items-center gap-1 border-l border-border pl-3">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 text-muted-foreground"
-                  onClick={() => setZoom((value) => Math.max(50, value - 10))}
-                  aria-label="Zoom out"
-                  title="Zoom out"
-                >
-                  <Minus size={13} />
-                </Button>
-                <span className="w-10 text-center font-mono text-[10px] tabular-nums text-muted-foreground">
-                  {zoom}%
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 text-muted-foreground"
-                  onClick={() => setZoom((value) => Math.min(150, value + 10))}
-                  aria-label="Zoom in"
-                  title="Zoom in"
-                >
-                  <Plus size={13} />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 text-muted-foreground"
-                  onClick={() => setZoom(100)}
-                  aria-label="Fit image to view"
-                  title="Fit to view"
-                >
-                  <Maximize2 size={12} />
-                </Button>
-              </div>
+                  <X size={15} />
+                </button>
+              )}
             </div>
-          )}
-          {viewMode === "side-by-side" && (
-            <div className="mt-4 flex items-center justify-end gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 text-muted-foreground"
-                onClick={() => setZoom((value) => Math.max(50, value - 10))}
-                aria-label="Zoom out"
-              >
-                <Minus size={13} />
-              </Button>
-              <span className="w-10 text-center font-mono text-[10px] tabular-nums text-muted-foreground">
-                {zoom}%
-              </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 text-muted-foreground"
-                onClick={() => setZoom((value) => Math.min(150, value + 10))}
-                aria-label="Zoom in"
-              >
-                <Plus size={13} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 text-muted-foreground"
-                onClick={() => setZoom(100)}
-                aria-label="Fit image to view"
-              >
-                <Maximize2 size={12} />
-              </Button>
-            </div>
-          )}
-          <div className="mt-5 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-t border-border pt-4 sm:flex sm:justify-between">
-            <p className="min-w-0 text-[11px] leading-5 text-muted-foreground">
-              <span className="mr-2 text-lab">●</span>
-              {explanation}
-            </p>
-            <span className="shrink-0 text-[9px] tracking-wider text-muted-foreground">
-              {hasCurrentResult ? "MATLAB PROCESSED" : "ORIGINAL PREVIEW"}
-            </span>
           </div>
-        </section>
+        )}
 
-        <aside className="analysis-column bg-panel px-5 py-6 sm:px-6">
-          <div className="analysis-inner">
-            <div>
-              <SectionTitle number="03" title="Tone analysis" />
-              <div className="mt-5 flex items-center justify-between gap-2">
-                <h2 className="text-xs font-medium text-foreground">Luminance histogram</h2>
-                <span className="text-[9px] text-muted-foreground">
-                  {hasCurrentResult ? "MATLAB DATA" : "AWAITING MATLAB"}
-                </span>
-              </div>
-              <p className="mt-1 text-[10px] text-muted-foreground">Pixel distribution · 0–255</p>
-              <div
-                className="mt-4"
-                aria-label="Luminance histogram comparing original and enhanced pixels"
-              >
-                <svg
-                  viewBox="0 0 240 104"
-                  className="block w-full overflow-visible"
-                  role="img"
-                  aria-label="Original and enhanced luminance histogram"
+        <div className="studio-grid">
+          <section className="inspect-column" aria-label="Image comparison and analysis">
+            <div className="preview-card">
+              <div className="preview-toolbar">
+                <div className="preview-file">
+                  <FileImage size={15} />
+                  <span title={fileName}>{fileName || "No image selected"}</span>
+                  {isDemo && imageUrl && <span className="small-tag">SAMPLE</span>}
+                </div>
+                <div
+                  className="segmented layout-switch"
+                  role="group"
+                  aria-label="Comparison layout"
                 >
-                  {[12, 34, 56, 78].map((y) => (
-                    <line key={y} x1="0" x2="240" y1={y} y2={y} className="histogram-grid" />
-                  ))}
-                  <path
-                    d={histogramPath(histograms.original, histogramPeak)}
-                    className="histogram-original"
-                  />
-                  <path
-                    d={histogramPath(histograms.enhanced, histogramPeak)}
-                    className="histogram-enhanced"
-                  />
-                  <line x1="0" x2="240" y1="84" y2="84" className="histogram-grid" />
-                </svg>
-                <div className="flex justify-between font-mono text-[9px] text-muted-foreground">
-                  <span>0</span>
-                  <span>64</span>
-                  <span>128</span>
-                  <span>192</span>
-                  <span>255</span>
+                  <button
+                    type="button"
+                    aria-pressed={viewMode === "split"}
+                    onClick={() => setViewMode("split")}
+                    disabled={!imageUrl}
+                  >
+                    <ArrowLeftRight size={13} />
+                    Split
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={viewMode === "side-by-side"}
+                    onClick={() => setViewMode("side-by-side")}
+                    disabled={!imageUrl}
+                  >
+                    Side by side
+                  </button>
                 </div>
               </div>
-              <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-[10px] text-muted-foreground">
-                <span className="flex items-center gap-1.5">
-                  <span className="h-px w-3 bg-muted-foreground" />
-                  Original
+              <div
+                className="comparison-stage checkerboard"
+                ref={stageRef}
+                onPointerMove={moveDivider}
+                onPointerUp={() => setIsDragging(false)}
+                onPointerCancel={() => setIsDragging(false)}
+              >
+                {imageUrl ? (
+                  viewMode === "split" ? (
+                    <>
+                      {imageCompare(true)}
+                      <div
+                        className="original-mask"
+                        style={{ clipPath: `inset(0 ${100 - split}% 0 0)` }}
+                      >
+                        {imageCompare(false)}
+                      </div>
+                      <span className="image-label original-label">ORIGINAL</span>
+                      <span className="image-label enhanced-label">{enhancedLabel}</span>
+                      <div className="divider-line" style={{ left: `${split}%` }} />
+                      <button
+                        type="button"
+                        className="divider-handle"
+                        style={{ left: `${split}%` }}
+                        role="slider"
+                        aria-label="Image comparison divider"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={Math.round(split)}
+                        aria-orientation="horizontal"
+                        onPointerDown={(event) => {
+                          event.currentTarget.setPointerCapture(event.pointerId);
+                          setIsDragging(true);
+                        }}
+                        onKeyDown={(event) => {
+                          if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+                            event.preventDefault();
+                            setSplit((value) =>
+                              event.key === "Home"
+                                ? 0
+                                : event.key === "End"
+                                  ? 100
+                                  : Math.min(
+                                      100,
+                                      Math.max(
+                                        0,
+                                        value +
+                                          (event.key === "ArrowLeft" ? -1 : 1) *
+                                            (event.shiftKey ? 10 : 1),
+                                      ),
+                                    ),
+                            );
+                          }
+                        }}
+                      >
+                        <ArrowLeftRight size={16} />
+                      </button>
+                    </>
+                  ) : (
+                    <div className="side-by-side">
+                      {[false, true].map((enhanced) => (
+                        <div className="side-image" key={String(enhanced)}>
+                          {imageCompare(enhanced)}
+                          <span className="image-label original-label">
+                            {enhanced ? enhancedLabel : "ORIGINAL"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : (
+                  <div className="empty-stage">
+                    <FileImage size={32} strokeWidth={1.2} />
+                    <h2>Your next experiment starts here.</h2>
+                    <p>Bring in an image to explore light, contrast, and tone.</p>
+                    <button
+                      type="button"
+                      className="studio-button primary"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <Upload size={15} />
+                      Choose image
+                    </button>
+                    <small>PNG or JPEG · up to 10 MB</small>
+                  </div>
+                )}
+                {isProcessing && (
+                  <span className="processing-pill" role="status">
+                    <span className="status-dot pulse" />
+                    Processing in MATLAB…
+                  </span>
+                )}
+              </div>
+              <div className="comparison-controls">
+                <div className="comparison-position">
+                  <span>Before</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={split}
+                    onChange={(event) => setSplit(Number(event.target.value))}
+                    disabled={!imageUrl || viewMode !== "split"}
+                    aria-label="Comparison position"
+                  />
+                  <span>After</span>
+                </div>
+                <div className="zoom-controls">
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={() => setZoom((value) => Math.max(50, value - 10))}
+                    disabled={!imageUrl}
+                    aria-label="Zoom out"
+                  >
+                    <Minus size={14} />
+                  </button>
+                  <span>{zoom}%</span>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={() => setZoom((value) => Math.min(200, value + 10))}
+                    disabled={!imageUrl}
+                    aria-label="Zoom in"
+                  >
+                    <Plus size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button fit-button"
+                    onClick={() => setZoom(100)}
+                    disabled={!imageUrl}
+                    aria-label="Fit image to view"
+                    title="Fit to view"
+                  >
+                    <Maximize2 size={14} />
+                  </button>
+                </div>
+              </div>
+              <div className="preview-caption">
+                <span className={hasCurrentResult ? "result-success" : ""}>
+                  {hasCurrentResult ? <Check size={13} /> : <span className="status-dot" />}
+                  {previewStatus}
                 </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="h-px w-3 bg-lab" />
-                  Enhanced
-                </span>
+                <span>{resultParameters}</span>
               </div>
             </div>
 
-            <div className="mt-7 border-t border-border pt-5 lg:border-t-0 lg:pt-0">
-              <SectionTitle number="04" title="Image statistics" />
-              <div className="mt-4 divide-y divide-border border-y border-border">
-                <Stat
-                  label="Dimensions"
-                  value={result ? `${result.original.width} × ${result.original.height}` : "—"}
-                  unit="px"
+            <div className="analysis-grid">
+              <section className="analysis-card">
+                <div className="card-heading">
+                  <h2>Tone distribution</h2>
+                  <span className="eyebrow">LUMINANCE</span>
+                </div>
+                <p className="card-description">See where the light and dark pixels fall.</p>
+                <Histogram
+                  original={result?.histograms.original ?? []}
+                  enhanced={result?.histograms.enhanced ?? []}
                 />
-                <Stat
-                  label="Channels"
-                  value={result ? String(result.original.channels) : "—"}
-                  unit=""
-                />
-                <Stat
-                  label="Mean intensity"
-                  value={result ? result.original.mean.toFixed(1) : "—"}
-                  unit="/ 255"
-                />
-                <Stat
-                  label="Std. deviation"
-                  value={result ? result.original.deviation.toFixed(1) : "—"}
-                  unit=""
-                />
-                <Stat
-                  label="Enhanced mean"
-                  value={result ? result.enhanced.mean.toFixed(1) : "—"}
-                  unit="/ 255"
-                />
-                <Stat
-                  label="Enhanced deviation"
-                  value={result ? result.enhanced.deviation.toFixed(1) : "—"}
-                  unit=""
-                />
-              </div>
-              <div className="mt-4 flex items-center justify-between text-[10px]">
-                <span className="text-muted-foreground">Current gamma</span>
-                <span className="font-mono tabular-nums text-lab">γ {gamma.toFixed(2)}</span>
-              </div>
+                <div className="chart-legend">
+                  <span>
+                    <i className="original-swatch" />
+                    Original
+                  </span>
+                  <span>
+                    <i className="enhanced-swatch" />
+                    Enhanced
+                  </span>
+                  <small>Brightness · 0–255</small>
+                </div>
+              </section>
+              <section className="analysis-card">
+                <div className="card-heading">
+                  <h2>Image statistics</h2>
+                  <span className="small-tag">
+                    {result?.outputKind === "edge-map"
+                      ? "EDGE MAP"
+                      : result?.enhanced.channels === 1
+                        ? "GRAYSCALE"
+                        : result
+                          ? "RGB"
+                          : "—"}
+                  </span>
+                </div>
+                <p className="card-description">Measured from the actual image pixels.</p>
+                <table className="statistics-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Measure</th>
+                      <th scope="col">Original</th>
+                      <th scope="col">
+                        {result?.outputKind === "edge-map" ? "Edge map" : "Enhanced"}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <th scope="row">Mean brightness</th>
+                      <td>{result?.original.mean.toFixed(1) ?? "—"}</td>
+                      <td>{result?.enhanced.mean.toFixed(1) ?? "—"}</td>
+                    </tr>
+                    <tr>
+                      <th scope="row">
+                        Contrast <span title="Population standard deviation of luminance">(σ)</span>
+                      </th>
+                      <td>{result?.original.deviation.toFixed(1) ?? "—"}</td>
+                      <td>{result?.enhanced.deviation.toFixed(1) ?? "—"}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p className="statistics-note">All pixels · luminance on a 0–255 scale</p>
+              </section>
             </div>
+          </section>
 
-            <div className="mt-7 border-t border-border pt-5">
-              <SectionTitle number="05" title="What changed" />
-              <p className="mt-3 text-xs leading-5 text-muted-foreground">{explanation}</p>
-              <div className="mt-4 flex items-center gap-2 text-[10px] text-muted-foreground">
-                <span className="grid h-5 w-5 place-items-center border border-border font-mono text-[9px] text-lab">
-                  {method === "gamma" ? "γ" : method === "equalize" ? "H" : "C"}
-                </span>
-                <span>{selectedMethod}</span>
-              </div>
+          <aside className="adjustments-panel" aria-label="Image adjustments">
+            <div className="panel-heading">
+              <h2>Adjustments</h2>
+              <span className="eyebrow">01 — 03</span>
             </div>
-          </div>
-        </aside>
+            <section className="load-section">
+              <h3 className="step-heading">
+                <span>01</span>Load your image
+              </h3>
+              <button
+                type="button"
+                className="upload-zone"
+                data-dragging={isDropActive}
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setIsDropActive(true);
+                }}
+                onDragLeave={() => setIsDropActive(false)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setIsDropActive(false);
+                  openFile(event.dataTransfer.files[0]);
+                }}
+              >
+                <Upload size={18} strokeWidth={1.5} />
+                <span>
+                  Drop an image or <b>browse</b>
+                </span>
+                <small>PNG / JPEG · up to 10 MB</small>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,.jpg,.jpeg"
+                className="sr-only"
+                aria-label="Upload image file"
+                onChange={(event) => {
+                  openFile(event.target.files?.[0]);
+                  event.currentTarget.value = "";
+                }}
+              />
+              {imageUrl && (
+                <div className="loaded-image">
+                  <img src={source?.originalUrl ?? imageUrl} alt="Selected image thumbnail" />
+                  <div>
+                    <span title={fileName}>{fileName}</span>
+                    <small>
+                      {source
+                        ? `${source.original.width} × ${source.original.height} px · ${source.original.channels} channel${source.original.channels === 1 ? "" : "s"}`
+                        : "Preparing image…"}
+                    </small>
+                  </div>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={removeImage}
+                    aria-label="Remove image"
+                    title="Remove image"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              )}
+            </section>
+
+            <section className="method-section">
+              <h3 className="step-heading">
+                <span>02</span>Choose a method
+              </h3>
+              <div
+                className={`segmented method-switch ${category === "spatial" ? "spatial-methods" : ""}`}
+                role="group"
+                aria-label="Enhancement method"
+              >
+                {methods
+                  .filter((item) => item.category === category)
+                  .map((item) => (
+                    <button
+                      type="button"
+                      key={item.id}
+                      aria-label={item.name}
+                      aria-pressed={method === item.id}
+                      disabled={!canAdjust}
+                      onClick={() => chooseMethod(item.id)}
+                    >
+                      {item.short}
+                    </button>
+                  ))}
+              </div>
+            </section>
+
+            <section className="parameter-section">
+              <h3 className="step-heading">
+                <span>03</span>Find your balance
+              </h3>
+              <div className="method-copy" key={method}>
+                <h4>{selectedMethod}</h4>
+                <p>{explanation}</p>
+              </div>
+              {method === "gamma" && (
+                <div className="method-controls">
+                  <div className="control-label">
+                    <label htmlFor="gamma-number">Gamma value</label>
+                    <div className="number-field">
+                      <span>γ</span>
+                      <input
+                        id="gamma-number"
+                        aria-label="Gamma numeric value"
+                        type="number"
+                        min="0.2"
+                        max="3"
+                        step="0.05"
+                        value={gammaValue}
+                        onChange={(event) => setGammaValue(event.target.value)}
+                        disabled={!canAdjust}
+                        aria-invalid={!!parameterError}
+                      />
+                    </div>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.2"
+                    max="3"
+                    step="any"
+                    value={Number.isFinite(gamma) ? gamma : 1}
+                    onChange={(event) =>
+                      setGammaValue(String(Math.round(Number(event.target.value) * 100) / 100))
+                    }
+                    disabled={!canAdjust}
+                    aria-label="Gamma value"
+                    className="parameter-slider"
+                  />
+                  <div className="range-labels">
+                    <span>0.2 · Brighter</span>
+                    <span>3.0 · Darker</span>
+                  </div>
+                  <div className="preset-row">
+                    {gammaPresets.map((preset) => (
+                      <button
+                        type="button"
+                        className="preset-button"
+                        key={preset.label}
+                        aria-pressed={gamma === Number(preset.value)}
+                        disabled={!canAdjust}
+                        onClick={() => setGammaValue(preset.value)}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {method === "equalize" && (
+                <div className="automatic-note">
+                  <Check size={16} />
+                  <div>
+                    <strong>No settings needed.</strong>
+                    <p>MATLAB finds the mapping from your image’s histogram.</p>
+                  </div>
+                </div>
+              )}
+              {method === "stretch" && (
+                <div className="method-controls">
+                  <div className="cutoff-row">
+                    <div className="control-label">
+                      <label htmlFor="low-cutoff">Low cutoff</label>
+                      <div className="number-field">
+                        <input
+                          id="low-cutoff"
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="1"
+                          value={lowValue}
+                          onChange={(event) => setLowValue(event.target.value)}
+                          disabled={!canAdjust}
+                          aria-invalid={!!parameterError}
+                          aria-describedby={parameterError ? "parameter-error" : "cutoff-help"}
+                        />
+                        <span>%</span>
+                      </div>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="any"
+                      value={Number.isFinite(low) ? low : 10}
+                      onChange={(event) =>
+                        setLowValue(
+                          String(
+                            Math.min(
+                              Math.round(Number(event.target.value) * 100) / 100,
+                              Number.isFinite(high) && high > 0 ? Math.max(0, high - 0.01) : 100,
+                            ),
+                          ),
+                        )
+                      }
+                      disabled={!canAdjust}
+                      aria-label="Low cutoff slider"
+                      className="parameter-slider"
+                    />
+                  </div>
+                  <div className="cutoff-row">
+                    <div className="control-label">
+                      <label htmlFor="high-cutoff">High cutoff</label>
+                      <div className="number-field">
+                        <input
+                          id="high-cutoff"
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="1"
+                          value={highValue}
+                          onChange={(event) => setHighValue(event.target.value)}
+                          disabled={!canAdjust}
+                          aria-invalid={!!parameterError}
+                          aria-describedby={parameterError ? "parameter-error" : "cutoff-help"}
+                        />
+                        <span>%</span>
+                      </div>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="any"
+                      value={Number.isFinite(high) ? high : 90}
+                      onChange={(event) =>
+                        setHighValue(
+                          String(
+                            Math.max(
+                              Math.round(Number(event.target.value) * 100) / 100,
+                              Number.isFinite(low) && low < 100 ? Math.min(100, low + 0.01) : 0,
+                            ),
+                          ),
+                        )
+                      }
+                      disabled={!canAdjust}
+                      aria-label="High cutoff slider"
+                      className="parameter-slider"
+                    />
+                  </div>
+                  <div className="selected-range">
+                    <span>Input brightness</span>
+                    <strong>{parameterError ? "Invalid range" : `${low}% → ${high}%`}</strong>
+                  </div>
+                  <div className="tone-range" aria-hidden="true">
+                    {!parameterError && (
+                      <span style={{ left: `${low}%`, width: `${high - low}%` }} />
+                    )}
+                  </div>
+                  <p id="cutoff-help" className="cutoff-help">
+                    Your selected range expands to 0–100% output brightness.
+                  </p>
+                  <div className="preset-row">
+                    {stretchPresets.map((preset) => (
+                      <button
+                        type="button"
+                        className="preset-button"
+                        key={preset.label}
+                        aria-pressed={low === Number(preset.low) && high === Number(preset.high)}
+                        disabled={!canAdjust}
+                        onClick={() => {
+                          setLowValue(preset.low);
+                          setHighValue(preset.high);
+                        }}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="text-button defaults-button"
+                    disabled={!canAdjust}
+                    onClick={() => {
+                      setLowValue("10");
+                      setHighValue("90");
+                    }}
+                  >
+                    Reset cutoffs
+                  </button>
+                </div>
+              )}
+              {category === "spatial" && (
+                <FilterControls
+                  method={method}
+                  kernelSize={kernelSize}
+                  sigmaValue={sigmaValue}
+                  amountValue={amountValue}
+                  disabled={!canAdjust}
+                  setKernelSize={setKernelSize}
+                  setSigmaValue={setSigmaValue}
+                  setAmountValue={setAmountValue}
+                />
+              )}
+              {parameterError && (
+                <p className="parameter-error" id="parameter-error" role="alert">
+                  {parameterError}
+                </p>
+              )}
+              <p className="auto-preview-note">
+                <span className="status-dot" />
+                {!imageFile
+                  ? "Load an image to begin."
+                  : !canAdjust
+                    ? health.status === "ready"
+                      ? "Reading your image in MATLAB…"
+                      : "Waiting for the MATLAB connection."
+                    : isProcessing
+                      ? "Updating your preview…"
+                      : "Changes preview automatically."}
+              </p>
+            </section>
+
+            <details className="learning-notes">
+              <summary>
+                Understand this method
+                <ChevronDown size={14} />
+              </summary>
+              <div>
+                {category === "spatial" ? (
+                  <>
+                    {method !== "sobel" && <NeighborhoodDiagram size={kernelSize} />}
+                    <p>
+                      {method === "mean"
+                        ? "Each pixel becomes the average of its neighborhood."
+                        : method === "gaussian"
+                          ? "Gaussian weights give the center more influence. Larger sigma spreads that influence."
+                          : method === "median"
+                            ? "The median is the middle value after sorting the neighborhood’s intensities."
+                            : method === "unsharp"
+                              ? "Detail = original − Gaussian blur. Result = original + strength × detail."
+                              : "Sobel estimates horizontal and vertical intensity changes. The output is a grayscale edge-strength map on a fixed 0–1 scale."}
+                    </p>
+                    <p>
+                      {method === "sobel"
+                        ? "RGB input is converted to luminance before detecting edges."
+                        : "RGB filters change BT.601 luminance and retain chrominance before clipping. Color noise can remain because chrominance is not smoothed."}
+                    </p>
+                  </>
+                ) : method === "gamma" ? (
+                  <>
+                    <p className="formula">
+                      s = r<sup>γ</sup>
+                    </p>
+                    <p>Intensity r is normalized to 0–1. Gamma 1 leaves the image unchanged.</p>
+                  </>
+                ) : method === "equalize" ? (
+                  <>
+                    <p>
+                      Each brightness level maps through the cumulative histogram. This spreads
+                      crowded tones over more of the output range.
+                    </p>
+                    <p>RGB processing changes luminance, keeping chrominance before clipping.</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="formula">s = (r − low) / (high − low)</p>
+                    <p>
+                      Below the low cutoff becomes black. Above the high cutoff becomes white.
+                      Values in between spread across the full range.
+                    </p>
+                    <p>
+                      Cutoffs are brightness percentages, not percentiles. RGB stretches luminance;
+                      color is preserved before gamut clipping. Flat images stay unchanged.
+                    </p>
+                  </>
+                )}
+              </div>
+            </details>
+            <div className="panel-footer">
+              <button
+                type="button"
+                className="studio-button secondary reset-button"
+                onClick={resetImage}
+                disabled={!imageUrl}
+              >
+                <RotateCcw size={14} />
+                Reset
+              </button>
+              <span>Original stays untouched.</span>
+            </div>
+          </aside>
+        </div>
+        <footer className="studio-footer">
+          <span>
+            LumaLab <i>/</i> Image processing, made visible.
+          </span>
+          <span>Full-resolution MATLAB processing</span>
+        </footer>
       </div>
-      <footer className="flex min-h-10 items-center justify-between gap-4 border-t border-border px-5 text-[9px] text-muted-foreground sm:px-8">
-        <span>
-          IMAGE ENHANCEMENT LABORATORY <span className="px-1.5 text-border">·</span> MATLAB IMAGE
-          PROCESSING
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground" />
-          {statusText.toUpperCase()}
-        </span>
-      </footer>
     </main>
   );
 }
 
-function SectionTitle({ number, title }: { number: string; title: string }) {
+function Histogram({ original, enhanced }: { original: number[]; enhanced: number[] }) {
+  const peak = Math.max(...original, ...enhanced, 1);
+  const path = (bins: number[]) =>
+    bins
+      .map(
+        (value, index) =>
+          `${index === 0 ? "M" : "L"}${(index / 255) * 480},${98 - (value / peak) * 86}`,
+      )
+      .join(" ");
+  const enhancedPath = path(enhanced);
   return (
-    <div className="flex items-center gap-2">
-      <span className="font-mono text-[9px] tabular-nums text-lab-dim">{number}</span>
-      <h2 className="text-[11px] font-semibold tracking-[0.08em] text-foreground">{title}</h2>
-    </div>
-  );
-}
-
-function Stat({ label, value, unit }: { label: string; value: string; unit: string }) {
-  return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 py-2.5">
-      <span className="min-w-0 truncate text-[10px] text-muted-foreground">{label}</span>
-      <span className="font-mono text-xs tabular-nums text-foreground">{value}</span>
-      <span className="text-[9px] text-muted-foreground">{unit}</span>
+    <div className="histogram-chart">
+      <div className="histogram-scale">
+        <span>Pixel count</span>
+        <span>
+          {original.length
+            ? `Peak ${Math.max(...original, ...enhanced).toLocaleString("en-US")}`
+            : "—"}
+        </span>
+      </div>
+      <svg
+        viewBox="0 0 480 108"
+        role="img"
+        aria-label="Original and enhanced luminance histogram"
+        preserveAspectRatio="none"
+      >
+        {[12, 40, 68, 98].map((y) => (
+          <line key={y} x1={0} x2={480} y1={y} y2={y} className="histogram-grid" />
+        ))}
+        {enhanced.length > 0 && (
+          <path d={`${enhancedPath} L480,98 L0,98 Z`} className="histogram-fill" />
+        )}
+        <path d={path(original)} className="histogram-original" />
+        <path d={enhancedPath} className="histogram-enhanced" />
+      </svg>
+      <div className="histogram-ticks">
+        <span>0</span>
+        <span>64</span>
+        <span>128</span>
+        <span>192</span>
+        <span>255</span>
+      </div>
     </div>
   );
 }

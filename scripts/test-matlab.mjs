@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 const quote = (value) => `'${value.replaceAll("'", "''")}'`;
-const expression = `addpath(${quote(resolve("matlab"))}); test_enhancement(${quote(resolve("src/assets/lumalab-sample.jpg"))})`;
+const samplePath = quote(resolve("src/assets/lumalab-sample.jpg"));
+const expression = `addpath(${quote(resolve("matlab"))}); test_enhancement(${samplePath}); test_spatial_filters(${samplePath})`;
 const child = spawn(process.env.MATLAB_BIN || "matlab", ["-batch", expression], {
   stdio: "inherit",
 });

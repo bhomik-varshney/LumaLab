@@ -1,4 +1,15 @@
-export type Method = "gamma" | "equalize" | "stretch";
+export type Category = "intensity" | "spatial";
+export type Method =
+  "gamma" | "equalize" | "stretch" | "mean" | "gaussian" | "median" | "unsharp" | "sobel";
+export type Parameters = {
+  gamma?: number;
+  lowCutoff?: number;
+  highCutoff?: number;
+  kernelSize?: number;
+  sigma?: number;
+  amount?: number;
+};
+export type ProcessingOptions = { category: Category; method: Method; parameters: Parameters };
 export type ImageInfo = {
   width: number;
   height: number;
@@ -15,8 +26,13 @@ export type ProcessingResult = {
   enhanced: ImageInfo;
   histograms: { original: number[]; enhanced: number[] };
   processor: "MATLAB";
+  category: Category;
   method: Method;
+  parameters: Parameters;
+  outputKind: "enhanced" | "edge-map";
   gamma: number;
+  lowCutoff: number;
+  highCutoff: number;
 };
 export type Health = { status: "starting" | "ready" | "offline"; detail: string };
 
@@ -49,10 +65,10 @@ export const uploadImage = (image: Blob, signal: AbortSignal) =>
     body: image,
     signal,
   });
-export const enhanceImage = (imageId: string, method: Method, gamma: number, signal: AbortSignal) =>
+export const enhanceImage = (imageId: string, options: ProcessingOptions, signal: AbortSignal) =>
   request<ProcessingResult>("process", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ imageId, method, gamma }),
+    body: JSON.stringify({ imageId, ...options }),
     signal,
   });

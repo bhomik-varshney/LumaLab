@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { processingOptions } from "./processing.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const workDir = await mkdtemp(join(tmpdir(), "lumalab-"));
@@ -129,14 +130,10 @@ async function body(request, limit) {
   return Buffer.concat(chunks);
 }
 
-async function processImage(imageId, method, gamma) {
+async function processImage(imageId, options) {
   if (status !== "ready") throw fail(detail, 503);
   const image = images.get(imageId);
   if (!image) throw fail("Image expired or was not uploaded. Upload it again.", 404);
-  if (!["gamma", "equalize", "stretch"].includes(method))
-    throw fail("Choose gamma, equalize, or stretch.");
-  if (typeof gamma !== "number" || !Number.isFinite(gamma) || gamma <= 0)
-    throw fail("Gamma must be a finite positive number.");
   if (pending >= 8) throw fail("MATLAB is busy. Wait for processing to finish and retry.", 429);
   image.usedAt = Date.now();
   const id = randomUUID();
@@ -148,7 +145,12 @@ async function processImage(imageId, method, gamma) {
   try {
     await writeFile(
       `${requestPath}.tmp`,
-      JSON.stringify({ inputPath: image.path, outputPath, originalPath, method, gamma }),
+      JSON.stringify({
+        inputPath: image.path,
+        outputPath,
+        originalPath,
+        ...options,
+      }),
     );
     await rename(`${requestPath}.tmp`, requestPath);
     const deadline = Date.now() + 60000;
@@ -216,7 +218,7 @@ const server = createServer(async (request, response) => {
       await writeFile(path, bytes);
       images.set(imageId, { path, usedAt: Date.now() });
       try {
-        send(200, await processImage(imageId, "gamma", 1));
+        send(200, await processImage(imageId, processingOptions({ method: "gamma" })));
       } catch (error) {
         images.delete(imageId);
         await rm(path, { force: true });
@@ -234,7 +236,7 @@ const server = createServer(async (request, response) => {
       }
       if (!input || typeof input.imageId !== "string")
         throw fail("A valid uploaded imageId is required.");
-      send(200, await processImage(input.imageId, input.method, input.gamma));
+      send(200, await processImage(input.imageId, processingOptions(input)));
     } else send(404, { error: "Unknown API route." });
   } catch (error) {
     send(error.statusCode || 500, {

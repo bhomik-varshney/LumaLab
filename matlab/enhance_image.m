@@ -1,9 +1,14 @@
-function output = enhance_image(input, method, gamma)
+function output = enhance_image(input, method, gamma, lowCutoff, highCutoff)
 % Pure enhancement: preserve the input, dimensions, numeric class and range.
 arguments
     input {mustBeNumericOrLogical, mustBeNonempty}
     method (1,:) char {mustBeMember(method, {'gamma','equalize','stretch'})}
     gamma (1,1) double {mustBeFinite, mustBePositive} = 1
+    lowCutoff (1,1) double {mustBeFinite, mustBeNonnegative} = 0.1
+    highCutoff (1,1) double {mustBeFinite, mustBePositive} = 0.9
+end
+if lowCutoff >= highCutoff || highCutoff > 1 || highCutoff - lowCutoff < 1e-6
+    error('LumaLab:Cutoffs', 'Choose cutoffs within 0-100%%, with low below high (at least 0.0001%% apart).');
 end
 if ~ismember(class(input), {'uint8','uint16','int16','single','double','logical'}) || ...
         ndims(input) > 3 || ~ismember(size(input,3), [1 3])
@@ -28,7 +33,9 @@ else
     end
     low = min(tone(:));
     high = max(tone(:));
-    if high - low <= eps(max(1, high))
+    tolerance = eps(max(1, high));
+    if strcmp(method, 'stretch'), tolerance = max(tolerance, 1e-6); end
+    if high - low <= tolerance
         output = input; % Constant images have no contrast to redistribute.
         return;
     end
@@ -46,7 +53,9 @@ else
         mapping = max(0, (cumulative - first) / (numel(tone) - first));
         mapped = reshape(mapping(levels(:)), size(tone));
     else
-        mapped = (tone - low) / (high - low);
+        % Explicit input-range mapping in base MATLAB. Cutoffs are normalized
+        % brightness, not percentiles; clipping is applied before RGB recovery.
+        mapped = min(1, max(0, (tone - lowCutoff) / (highCutoff - lowCutoff)));
     end
     if isRGB
         % Adding the same Y' delta to R/G/B preserves full-range BT.601

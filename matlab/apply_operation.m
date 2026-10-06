@@ -5,12 +5,10 @@ if ~isstruct(step) || ~isscalar(step) || ~isfield(step,'method')
     error('LumaLab:Method', 'Choose a method and its parameters.');
 end
 method = char(step.method);
-intensityMethods = {'gamma','equalize','stretch'};
-spatialMethods = {'mean','gaussian','median','unsharp','sobel'};
-if ~ismember(method, [intensityMethods spatialMethods])
-    error('LumaLab:Method', 'Choose a supported intensity transformation or spatial filter.');
-end
-if ismember(method,intensityMethods), category = 'intensity'; else, category = 'spatial'; end
+definitions = registered_operations();
+index = find(strcmp({definitions.id},method),1);
+if isempty(index), error('LumaLab:Method','Choose an available operation.'); end
+definition = definitions(index); category = definition.category;
 if isfield(step,'category') && ~strcmp(char(step.category),category)
     error('LumaLab:Category', 'Category does not match the selected method.');
 end
@@ -22,24 +20,29 @@ if isfield(step,'parameters')
 else
     settings = step; % Preserve established flat intensity requests.
 end
-gamma = setting(settings,'gamma',1);
-lowCutoff = setting(settings,'lowCutoff',0.1);
-highCutoff = setting(settings,'highCutoff',0.9);
-switch method
-    case 'gamma', parameters = struct('gamma',gamma);
-    case 'equalize', parameters = struct();
-    case 'stretch', parameters = struct('lowCutoff',lowCutoff,'highCutoff',highCutoff);
-    case 'sobel', parameters = struct();
-    otherwise
-        defaultKernel = 3;
-        if ismember(method,{'gaussian','unsharp'}), defaultKernel = 5; end
-        parameters = struct('kernelSize',setting(settings,'kernelSize',defaultKernel));
-        if ismember(method,{'gaussian','unsharp'}), parameters.sigma = setting(settings,'sigma',1); end
-        if strcmp(method,'unsharp'), parameters.amount = setting(settings,'amount',1); end
+parameters = struct();
+fields = fieldnames(definition.parameters);
+for index = 1:numel(fields)
+    field = fields{index}; rule = definition.parameters.(field);
+    value = setting(settings,field,rule.default);
+    if ~isnumeric(value) || ~isscalar(value) || ~isfinite(value) || ...
+            (~isempty(rule.min) && value < rule.min) || (~isempty(rule.max) && value > rule.max) || ...
+            (isfield(rule,'minExclusive') && rule.minExclusive && value == rule.min) || ...
+            (isfield(rule,'integer') && rule.integer && mod(value,1)~=0) || ...
+            (isfield(rule,'odd') && rule.odd && mod(value,2)~=1)
+        error('LumaLab:Parameters','Invalid %s for %s.',field,definition.label);
+    end
+    parameters.(field) = value;
 end
-if isfield(step,'parameters') && any(~ismember(fieldnames(settings),fieldnames(parameters)))
+if strcmp(method,'stretch') && parameters.highCutoff-parameters.lowCutoff < definition.constraints.minGap
+    error('LumaLab:Parameters','Cutoffs must have low below high.');
+end
+if isfield(step,'parameters') && any(~ismember(fieldnames(settings),fields))
     error('LumaLab:Parameters', 'Only send parameters for the selected method.');
 end
+gamma = setting(parameters,'gamma',1);
+lowCutoff = setting(parameters,'lowCutoff',0.1);
+highCutoff = setting(parameters,'highCutoff',0.9);
 if strcmp(category,'intensity')
     output = enhance_image(input,method,gamma,lowCutoff,highCutoff);
 else

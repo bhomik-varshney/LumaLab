@@ -40,7 +40,9 @@ import { FilterSimulation } from "@/components/filter-simulation";
 import { isValidKernelSize } from "@/lib/filter-settings";
 import { ProcessingSequence } from "@/components/processing-sequence";
 import { MAX_SEQUENCE_STEPS, sequenceSignature } from "@/lib/processing-sequence";
-import type { SequenceStep, SequencePhase } from "@/lib/processing-sequence";
+import { validateOperation, operationRegistry } from "../../shared/operations.mjs";
+import type { SequenceRecommendation } from "@/lib/learning-context";
+import type { NoisySequenceInput, SequenceStep, SequencePhase } from "@/lib/processing-sequence";
 
 type ViewMode = "split" | "side-by-side";
 const gammaPresets = [
@@ -92,6 +94,12 @@ function LumaLab() {
   const [result, setResult] = useState<ProcessingResult | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [previewMode, setPreviewMode] = useState<"single" | "sequence">("single");
+  const [latestNoise, setLatestNoise] = useState<ProcessingResult | null>(null);
+  const [sequenceInput, setSequenceInput] = useState<NoisySequenceInput | null>(null);
+  const [sequenceResultInput, setSequenceResultInput] = useState<NoisySequenceInput | null>(null);
+  const [compareClean, setCompareClean] = useState(false);
+  const [sequenceNotice, setSequenceNotice] = useState("");
+  const sequenceBuilderRef = useRef<HTMLDetailsElement>(null);
   const [sequenceSteps, setSequenceSteps] = useState<SequenceStep[]>([]);
   const [sequencePhase, setSequencePhase] = useState<SequencePhase>("idle");
   const [sequenceProgress, setSequenceProgress] = useState<SequenceProgress | null>(null);
@@ -188,6 +196,7 @@ function LumaLab() {
     } else setSequencePhase("idle");
     setPreviewMode("single");
     setSequenceProgress(null);
+    setLatestNoise(null);
     setImageId(null);
     setResult(null);
     neutralResult.current = null;
@@ -298,7 +307,10 @@ function LumaLab() {
     previewMode === "sequence" &&
     sequencePhase === "success" &&
     result.method === "sequence" &&
-    result.imageId === imageId &&
+    result.imageId === (sequenceInput?.imageId ?? imageId) &&
+    (!sequenceInput ||
+      (sequenceInput.cleanImageId === imageId &&
+        latestNoise?.noisyImageId === sequenceInput.imageId)) &&
     sequenceSignature(result.steps ?? []) === sequenceSignature(sequenceSteps);
   const hasCurrentResult =
     hasCurrentSequence ||
@@ -310,6 +322,25 @@ function LumaLab() {
       Object.entries(options.parameters).every(
         ([key, value]) => result.parameters[key as keyof typeof result.parameters] === value,
       ));
+  const sequenceValidationError = (() => {
+    if (
+      sequenceInput &&
+      (sequenceInput.cleanImageId !== imageId ||
+        latestNoise?.noisyImageId !== sequenceInput.imageId)
+    )
+      return "The reviewed noisy input changed or was reset. Choose the current noisy realization or clean original before running.";
+    for (let index = 0; index < sequenceSteps.length; index++) {
+      try {
+        validateOperation(sequenceSteps[index], {
+          strict: true,
+          availableIds: health.operations ?? operationRegistry.operations.map((item) => item.id),
+        });
+      } catch (error) {
+        return `Step ${index + 1} needs correction: ${(error as Error).message}`;
+      }
+    }
+    return "";
+  })();
   const canAdjust = !!imageFile && !!imageId && health.status === "ready" && !sequenceRunning;
   const canSave = hasCurrentResult && !isProcessing && health.status === "ready";
   const source = neutralResult.current;
@@ -436,13 +467,79 @@ function LumaLab() {
     [next[index], next[target]] = [next[target]!, next[index]!];
     updateSequence(next);
   };
+  const noiseBinding = (noisy: ProcessingResult): NoisySequenceInput | null =>
+    noisy.noisyImageId && noisy.noise
+      ? {
+          imageId: noisy.noisyImageId,
+          cleanImageId: noisy.imageId,
+          url: noisy.url,
+          noise: noisy.noise,
+          info: noisy.enhanced,
+          histogram: noisy.histograms.enhanced,
+          label: `${fileName} · ${noisy.noise.type === "salt-pepper" ? `salt-and-pepper ${noisy.noise.density * 100}%` : `Gaussian σ ${noisy.noise.standardDeviation}`} · seed ${noisy.noise.seed}`,
+        }
+      : null;
+  const acceptRecommendation = (
+    recommendation: SequenceRecommendation,
+    mode: "append" | "replace",
+    noisy: ProcessingResult | null = null,
+  ): string | null => {
+    if (sequenceController.current || isProcessing)
+      return "Wait for MATLAB processing to finish before adding steps.";
+    if (!imageId) return "Load an image before accepting a sequence.";
+    const input = recommendation.input === "noisy" ? noisy && noiseBinding(noisy) : null;
+    if (
+      recommendation.input === "noisy" &&
+      (!input || input.cleanImageId !== imageId || latestNoise?.noisyImageId !== input.imageId)
+    )
+      return "The recommended noisy input is no longer current. Generate noise and ask again.";
+    if (
+      mode === "append" &&
+      sequenceSteps.length &&
+      (sequenceInput?.imageId ?? imageId) !== (input?.imageId ?? imageId)
+    )
+      return "These steps use a different input from your saved sequence. Choose replacement explicitly, or keep the current sequence.";
+    if (
+      (mode === "append" ? sequenceSteps.length : 0) + recommendation.steps.length >
+      MAX_SEQUENCE_STEPS
+    )
+      return "The sequence would exceed six steps. Remove steps or explicitly replace it.";
+    let steps: SequenceStep[];
+    try {
+      steps = recommendation.steps.map((step) => ({
+        ...validateOperation(step, {
+          strict: true,
+          availableIds: health.operations ?? operationRegistry.operations.map((item) => item.id),
+        }),
+        id: crypto.randomUUID(),
+      }));
+    } catch (error) {
+      return (error as Error).message;
+    }
+    updateSequence(mode === "append" ? [...sequenceSteps, ...steps] : steps);
+    setSequenceInput(input);
+    setSequenceNotice(
+      "AI suggestion accepted as editable steps. Review them and click Run sequence when ready.",
+    );
+    setWorkspaceMode("studio");
+    requestAnimationFrame(() => {
+      const builder = sequenceBuilderRef.current;
+      if (builder) {
+        builder.open = true;
+        builder.scrollIntoView({ behavior: "smooth", block: "center" });
+        builder.querySelector<HTMLButtonElement>('button[aria-label^="Edit step"]')?.focus();
+      }
+    });
+    return null;
+  };
   const startSequence = async () => {
     if (
       sequenceController.current ||
       !canAdjust ||
       isProcessing ||
       !imageId ||
-      !sequenceSteps.length
+      !sequenceSteps.length ||
+      sequenceValidationError
     )
       return;
     const controller = new AbortController();
@@ -461,9 +558,16 @@ function LumaLab() {
     setSequenceError("");
     setErrorMessage("");
     try {
-      const output = await runSequence(imageId, steps, runId, controller.signal);
+      const output = await runSequence(
+        sequenceInput?.imageId ?? imageId,
+        steps,
+        runId,
+        controller.signal,
+      );
       if (controller.signal.aborted) return;
       setResult(output);
+      setSequenceResultInput(sequenceInput);
+      setCompareClean(false);
       setSequencePhase("success");
       setSequenceProgress({
         state: "complete",
@@ -499,7 +603,7 @@ function LumaLab() {
     if (!result || !canSave) return;
     const link = document.createElement("a");
     link.href = result.url;
-    link.download = `${fileName.replace(/\.[^.]+$/, "")}-${result.method}.png`;
+    link.download = `${fileName.replace(/\.[^.]+$/, "")}-${result.method === "sequence" && sequenceResultInput ? "noisy-sequence" : result.method}.png`;
     link.click();
   };
   const moveDivider = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -507,13 +611,22 @@ function LumaLab() {
     const bounds = stageRef.current.getBoundingClientRect();
     setSplit(Math.min(100, Math.max(0, ((event.clientX - bounds.left) / bounds.width) * 100)));
   };
+  const showingNoisySequence =
+    previewMode === "sequence" && result?.method === "sequence" && !!sequenceResultInput;
+  const comparisonOriginalUrl =
+    showingNoisySequence && !compareClean
+      ? sequenceResultInput!.url
+      : (source?.originalUrl ?? imageUrl);
+  const comparisonOriginalInfo =
+    showingNoisySequence && compareClean ? source?.original : result?.original;
+  const comparisonOriginalHistogram =
+    showingNoisySequence && compareClean
+      ? source?.histograms.original
+      : result?.histograms.original;
+  const originalLabel = showingNoisySequence && !compareClean ? "NOISY INPUT" : "ORIGINAL";
   const imageCompare = (enhanced: boolean) => (
     <img
-      src={
-        enhanced
-          ? (result?.url ?? source?.originalUrl ?? imageUrl)
-          : (source?.originalUrl ?? imageUrl)
-      }
+      src={enhanced ? (result?.url ?? source?.originalUrl ?? imageUrl) : comparisonOriginalUrl}
       alt={
         enhanced
           ? result?.method === "sequence"
@@ -523,7 +636,9 @@ function LumaLab() {
             : result?.outputKind === "edge-map"
               ? "Sobel edge map preview"
               : "Enhanced image preview"
-          : "Original image preview"
+          : showingNoisySequence && !compareClean
+            ? "Noisy sequence input preview"
+            : "Original image preview"
       }
       draggable={false}
       className="comparison-image"
@@ -580,12 +695,7 @@ function LumaLab() {
 
       <div className="studio-content">
         <div className="workspace-heading">
-          <div>
-            <p className="eyebrow">THE IMAGE LAB / WORKSPACE</p>
-            <h1>See the difference.</h1>
-            <p className="workspace-intro">Adjust tones. Smooth noise. Bring out detail.</p>
-          </div>
-          <span className="workspace-hint">Load. Adjust. Compare.</span>
+          <div></div>
         </div>
         <div className="workspace-modes segmented" role="group" aria-label="Workspace mode">
           <button
@@ -614,11 +724,29 @@ function LumaLab() {
               fileName={fileName}
               health={health}
               onUpload={() => fileInputRef.current?.click()}
+              onNoiseChange={setLatestNoise}
+              onAccept={(recommendation, mode, noisy) =>
+                acceptRecommendation(recommendation, mode, noisy)
+              }
+              sequenceLength={sequenceSteps.length}
             />
           </div>
         )}
         <div hidden={workspaceMode !== "studio"}>
           <LearningAssistant
+            sourceKey={`${imageId ?? "empty"}:${sequenceInput?.imageId ?? "original"}:${latestNoise?.noisyImageId ?? "none"}`}
+            sourceLabel={sequenceInput?.label ?? fileName}
+            sequenceLength={sequenceSteps.length}
+            acceptDisabled={sequenceRunning || isProcessing || !imageId}
+            onAccept={(recommendation, mode) =>
+              acceptRecommendation(
+                recommendation,
+                mode,
+                sequenceInput && latestNoise?.noisyImageId !== sequenceInput.imageId
+                  ? null
+                  : latestNoise,
+              )
+            }
             context={{
               mode: "studio",
               status: !imageId
@@ -650,10 +778,26 @@ function LumaLab() {
                       parameters: result.parameters,
                     }
                   : null,
-              noise: null,
+              workflow: previewMode,
+              sequenceInput: sequenceInput ? "noisy" : "original",
+              resultInput:
+                result?.method === "sequence" && sequenceResultInput ? "noisy" : "original",
+              noise: sequenceInput?.noise ?? null,
+              selectedNoise: sequenceInput ? (latestNoise?.noise ?? null) : null,
               measurements: result
                 ? {
-                    original: measuredContext(result.original, result.histograms.original),
+                    original: measuredContext(
+                      source?.original ?? result.original,
+                      source?.histograms.original ?? result.histograms.original,
+                    ),
+                    ...(sequenceResultInput
+                      ? {
+                          noisy: measuredContext(
+                            sequenceResultInput.info,
+                            sequenceResultInput.histogram,
+                          ),
+                        }
+                      : {}),
                     result: measuredContext(result.enhanced, result.histograms.enhanced),
                   }
                 : {},
@@ -759,7 +903,7 @@ function LumaLab() {
                         >
                           {imageCompare(false)}
                         </div>
-                        <span className="image-label original-label">ORIGINAL</span>
+                        <span className="image-label original-label">{originalLabel}</span>
                         <span className="image-label enhanced-label">{enhancedLabel}</span>
                         <div className="divider-line" style={{ left: `${split}%` }} />
                         <button
@@ -806,7 +950,7 @@ function LumaLab() {
                           <div className="side-image" key={String(enhanced)}>
                             {imageCompare(enhanced)}
                             <span className="image-label original-label">
-                              {enhanced ? enhancedLabel : "ORIGINAL"}
+                              {enhanced ? enhancedLabel : originalLabel}
                             </span>
                           </div>
                         ))}
@@ -890,6 +1034,20 @@ function LumaLab() {
                 </div>
               </div>
 
+              {showingNoisySequence && (
+                <div
+                  className="sequence-source-compare segmented"
+                  role="group"
+                  aria-label="Sequence comparison source"
+                >
+                  <button aria-pressed={!compareClean} onClick={() => setCompareClean(false)}>
+                    Noisy sequence input
+                  </button>
+                  <button aria-pressed={compareClean} onClick={() => setCompareClean(true)}>
+                    Clean original
+                  </button>
+                </div>
+              )}
               <div className="analysis-grid">
                 <section className="analysis-card">
                   <div className="card-heading">
@@ -898,13 +1056,14 @@ function LumaLab() {
                   </div>
                   <p className="card-description">See where the light and dark pixels fall.</p>
                   <Histogram
-                    original={result?.histograms.original ?? []}
+                    original={comparisonOriginalHistogram ?? []}
                     enhanced={result?.histograms.enhanced ?? []}
+                    label={`${showingNoisySequence && !compareClean ? "Noisy input" : "Original"} and ${result?.method === "sequence" ? "sequence result" : result?.outputKind === "edge-map" ? "edge map" : "enhanced image"} luminance histogram`}
                   />
                   <div className="chart-legend">
                     <span>
                       <i className="original-swatch" />
-                      Original
+                      {showingNoisySequence && !compareClean ? "Noisy input" : "Original"}
                     </span>
                     <span>
                       <i className="enhanced-swatch" />
@@ -937,7 +1096,9 @@ function LumaLab() {
                     <thead>
                       <tr>
                         <th scope="col">Measure</th>
-                        <th scope="col">Original</th>
+                        <th scope="col">
+                          {showingNoisySequence && !compareClean ? "Noisy input" : "Original"}
+                        </th>
                         <th scope="col">
                           {result?.method === "sequence"
                             ? result.outputKind === "edge-map"
@@ -952,7 +1113,7 @@ function LumaLab() {
                     <tbody>
                       <tr>
                         <th scope="row">Mean brightness</th>
-                        <td>{result?.original.mean.toFixed(1) ?? "—"}</td>
+                        <td>{comparisonOriginalInfo?.mean.toFixed(1) ?? "—"}</td>
                         <td>{result?.enhanced.mean.toFixed(1) ?? "—"}</td>
                       </tr>
                       <tr>
@@ -960,7 +1121,7 @@ function LumaLab() {
                           Contrast{" "}
                           <span title="Population standard deviation of luminance">(σ)</span>
                         </th>
-                        <td>{result?.original.deviation.toFixed(1) ?? "—"}</td>
+                        <td>{comparisonOriginalInfo?.deviation.toFixed(1) ?? "—"}</td>
                         <td>{result?.enhanced.deviation.toFixed(1) ?? "—"}</td>
                       </tr>
                     </tbody>
@@ -1315,6 +1476,55 @@ function LumaLab() {
               </section>
 
               <ProcessingSequence
+                builderRef={sequenceBuilderRef}
+                inputLabel={
+                  sequenceInput
+                    ? `Noisy input · seed ${sequenceInput.noise.seed}`
+                    : "Original image"
+                }
+                validationError={sequenceValidationError}
+                onEdit={(id, options) =>
+                  updateSequence(
+                    sequenceSteps.map((step) => (step.id === id ? { ...options, id } : step)),
+                  )
+                }
+                inputControls={
+                  <div className="sequence-input-control">
+                    <label htmlFor="sequence-input">Sequence input</label>
+                    <select
+                      id="sequence-input"
+                      disabled={sequenceRunning}
+                      value={sequenceInput?.imageId ?? "original"}
+                      onChange={(event) => {
+                        if (event.target.value === "original") {
+                          setSequenceInput(null);
+                          updateSequence(sequenceSteps);
+                        } else if (latestNoise) {
+                          setSequenceInput(noiseBinding(latestNoise));
+                          updateSequence(sequenceSteps);
+                        }
+                      }}
+                    >
+                      <option value="original">Clean original</option>
+                      {sequenceInput && sequenceInput.imageId !== latestNoise?.noisyImageId && (
+                        <option value={sequenceInput.imageId} disabled>
+                          Reviewed noise · seed {sequenceInput.noise.seed} · unavailable
+                        </option>
+                      )}
+                      {latestNoise?.noisyImageId && (
+                        <option value={latestNoise.noisyImageId}>
+                          Noisy realization · seed {latestNoise.noise?.seed}
+                        </option>
+                      )}
+                    </select>
+                    {sequenceInput && <p className="filter-guidance">{sequenceInput.label}</p>}
+                    {sequenceNotice && (
+                      <p className="filter-guidance" role="status">
+                        {sequenceNotice}
+                      </p>
+                    )}
+                  </div>
+                }
                 steps={sequenceSteps}
                 phase={sequencePhase}
                 progress={sequenceProgress}

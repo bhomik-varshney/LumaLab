@@ -1,3 +1,4 @@
+import { operationRegistry } from "../shared/operations.mjs";
 const invalid = (message) => {
   throw Object.assign(new Error(message), { statusCode: 400 });
 };
@@ -11,10 +12,11 @@ export function noiseOptions(input) {
     !value ||
     typeof value !== "object" ||
     Array.isArray(value) ||
-    !["salt-pepper", "gaussian"].includes(value.type)
+    !Object.hasOwn(operationRegistry.noise, value.type)
   )
     invalid("Choose salt-and-pepper or Gaussian noise.");
-  const field = value.type === "salt-pepper" ? "density" : "standardDeviation";
+  const definition = operationRegistry.noise[value.type];
+  const field = definition.parameter;
   if (Object.keys(value).some((key) => !["type", "seed", field].includes(key)))
     invalid("Only send parameters for the chosen noise type.");
   if (!Number.isInteger(value.seed) || value.seed < 0 || value.seed > 4294967295)
@@ -23,7 +25,7 @@ export function noiseOptions(input) {
     typeof value[field] !== "number" ||
     !Number.isFinite(value[field]) ||
     value[field] < 0 ||
-    value[field] > (field === "density" ? 0.3 : 0.2)
+    value[field] > definition.max
   )
     invalid(
       field === "density"

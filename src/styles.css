@@ -2403,3 +2403,193 @@ input[type="range"]::-moz-range-thumb {
     padding: 12px;
   }
 }
+
+/* Safe formatted explanations and explicit AI sequence review. */
+.ai-answer {
+  white-space: normal;
+}
+.ai-answer p,
+.recommendation-review p {
+  margin: 0.65em 0;
+}
+.ai-answer h1,
+.ai-answer h2,
+.ai-answer h3,
+.ai-answer h4,
+.ai-answer h5,
+.ai-answer h6 {
+  font-size: 14px;
+  font-weight: 650;
+  color: #e5eddf;
+  margin: 1.25em 0 0.5em;
+}
+.ai-answer h1:first-child,
+.ai-answer h2:first-child,
+.ai-answer h3:first-child {
+  margin-top: 0;
+}
+.ai-answer ul,
+.ai-answer ol {
+  padding-left: 1.5em;
+  margin: 0.7em 0;
+}
+.ai-answer ul {
+  list-style: disc;
+}
+.ai-answer ol {
+  list-style: decimal;
+}
+.ai-answer li {
+  margin: 0.35em 0;
+  padding-left: 0.15em;
+}
+.ai-answer strong {
+  font-weight: 650;
+  color: #e6eede;
+}
+.ai-answer code {
+  font-size: 0.92em;
+  background: #111a14;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+.ai-answer pre {
+  overflow-x: auto;
+  padding: 12px;
+  background: #111a14;
+  border-radius: 7px;
+  margin: 12px 0;
+  white-space: pre;
+}
+.ai-answer pre code {
+  padding: 0;
+}
+.ai-answer hr {
+  border: 0;
+  border-top: 1px solid #3b493e;
+  margin: 16px 0;
+}
+.ai-answer blockquote {
+  border-left: 2px solid #607b5d;
+  padding-left: 12px;
+  color: #bac9b9;
+}
+.ai-answer a {
+  color: #b6df94;
+  text-decoration: underline;
+}
+.ai-plain-fallback {
+  white-space: pre-wrap;
+}
+.ai-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+.ai-table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.ai-table-scroll th,
+.ai-table-scroll td {
+  text-align: left;
+  border-bottom: 1px solid #3a4b3d;
+  padding: 7px 10px;
+}
+.recommendation-review {
+  border-top: 1px solid #435340;
+  margin-top: 18px;
+  padding-top: 16px;
+  font-size: 13px;
+}
+.recommendation-review h3 {
+  font-size: 15px;
+  margin: 12px 0 6px;
+}
+.recommendation-steps {
+  list-style: decimal;
+  padding-left: 22px;
+  margin: 12px 0;
+}
+.recommendation-steps li {
+  padding: 6px 0 6px 4px;
+}
+.recommendation-steps li > span {
+  display: block;
+  color: #b4c2b2;
+  font-size: 12px;
+  margin: 3px 0;
+}
+.recommendation-steps summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: #b8cfaa;
+  margin-top: 5px;
+}
+.recommendation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.recommendation-confirm {
+  flex-basis: 100%;
+  padding: 12px;
+  background: #182018;
+  border: 1px solid #4f5c40;
+  border-radius: 8px;
+}
+.recommendation-unavailable {
+  border-left: 2px solid #d2b66f;
+  padding-left: 12px;
+  color: #d7c999;
+}
+.sequence-input-control {
+  margin: 12px 0;
+  font-size: 12px;
+}
+.sequence-input-control label {
+  display: block;
+  margin-bottom: 6px;
+}
+.sequence-input-control select {
+  width: 100%;
+  border: 1px solid #475144;
+  background: #172019;
+  color: #e7ecdf;
+  border-radius: 6px;
+  padding: 8px;
+}
+.sequence-source-compare {
+  margin: 12px 0;
+  width: fit-content;
+}
+.sequence-step-list li:has(.sequence-step-editor) {
+  flex-wrap: wrap;
+}
+.sequence-step-editor {
+  flex-basis: 100%;
+  display: grid;
+  gap: 8px;
+  padding: 10px 0;
+}
+.sequence-step-editor label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #c5d0bc;
+  font-size: 12px;
+}
+.sequence-step-editor input {
+  width: 95px;
+  background: #111b14;
+  color: #eef3e6;
+  border: 1px solid #495641;
+  border-radius: 5px;
+  padding: 5px;
+}
+
+.ai-answer p {
+  white-space: pre-line;
+}

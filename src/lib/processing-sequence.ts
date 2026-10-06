@@ -1,6 +1,7 @@
 import type { ProcessingOptions } from "./matlab-api";
 
-export const MAX_SEQUENCE_STEPS = 6;
+import { operationRegistry } from "../../shared/operations.mjs";
+export const MAX_SEQUENCE_STEPS = operationRegistry.maxSequenceSteps;
 export type SequenceStep = ProcessingOptions & { id: string };
 export type SequencePhase = "idle" | "running" | "success" | "error";
 export const sequenceSignature = (steps: ProcessingOptions[]) =>
@@ -13,3 +14,13 @@ export const sequenceSignature = (steps: ProcessingOptions[]) =>
       ),
     })),
   );
+
+export type NoisySequenceInput = {
+  imageId: string;
+  cleanImageId: string;
+  url: string;
+  label: string;
+  noise: import("./matlab-api").NoiseSettings;
+  info: import("./matlab-api").ImageInfo;
+  histogram: number[];
+};

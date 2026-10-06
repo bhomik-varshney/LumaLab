@@ -1,0 +1,176 @@
+{
+  "maxSequenceSteps": 6,
+  "input": "Grayscale or RGB; normalized floats 0\u20131; native classes preserved. RGB spatial/intensity histogram operations use BT.601 luminance, gamma is per channel. Borders replicate. Sobel returns a grayscale edge map. No image pixels are sent to AI.",
+  "operations": [
+    {
+      "id": "gamma",
+      "category": "intensity",
+      "label": "Gamma correction",
+      "implementation": "enhance_image",
+      "parameters": {
+        "gamma": {
+          "default": 1,
+          "min": 0,
+          "max": null,
+          "minExclusive": true,
+          "uiMin": 0.2,
+          "uiMax": 3,
+          "label": "Gamma"
+        }
+      },
+      "constraints": [],
+      "description": "Per-channel power mapping; gamma below 1 brightens normalized midtones, above 1 darkens."
+    },
+    {
+      "id": "equalize",
+      "category": "intensity",
+      "label": "Histogram equalization",
+      "implementation": "enhance_image",
+      "parameters": {},
+      "constraints": [],
+      "description": "256-bin cumulative histogram mapping of luminance; constant images unchanged. Can amplify noise."
+    },
+    {
+      "id": "stretch",
+      "category": "intensity",
+      "label": "Contrast stretching",
+      "implementation": "enhance_image",
+      "parameters": {
+        "lowCutoff": {
+          "default": 0.1,
+          "min": 0,
+          "max": 1,
+          "label": "Low cutoff (0\u20131 brightness)"
+        },
+        "highCutoff": {
+          "default": 0.9,
+          "min": 0,
+          "max": 1,
+          "label": "High cutoff (0\u20131 brightness)"
+        }
+      },
+      "constraints": [
+        {
+          "lower": "lowCutoff",
+          "upper": "highCutoff",
+          "minGap": 1e-6
+        }
+      ],
+      "description": "Clip and rescale normalized input luminance brightness cutoffs, not percentiles. Constant images unchanged."
+    },
+    {
+      "id": "mean",
+      "category": "spatial",
+      "label": "Mean",
+      "implementation": "spatial_filter",
+      "parameters": {
+        "kernelSize": {
+          "default": 3,
+          "min": 3,
+          "max": 15,
+          "integer": true,
+          "odd": true,
+          "label": "Kernel size (odd pixels)"
+        }
+      },
+      "constraints": [],
+      "description": "Normalized box average of luminance; smooths variations and can soften edges or spread impulses."
+    },
+    {
+      "id": "gaussian",
+      "category": "spatial",
+      "label": "Gaussian",
+      "implementation": "spatial_filter",
+      "parameters": {
+        "kernelSize": {
+          "default": 5,
+          "min": 3,
+          "max": 15,
+          "integer": true,
+          "odd": true,
+          "label": "Kernel size (odd pixels)"
+        },
+        "sigma": {
+          "default": 1,
+          "min": 0.3,
+          "max": 3,
+          "label": "Blur sigma (pixels)"
+        }
+      },
+      "constraints": [],
+      "description": "Normalized spatial Gaussian weights; sigma is in pixels, separate from normalized Gaussian noise standard deviation."
+    },
+    {
+      "id": "median",
+      "category": "spatial",
+      "label": "Median",
+      "implementation": "spatial_filter",
+      "parameters": {
+        "kernelSize": {
+          "default": 3,
+          "min": 3,
+          "max": 15,
+          "integer": true,
+          "odd": true,
+          "label": "Kernel size (odd pixels)"
+        }
+      },
+      "constraints": [],
+      "description": "Neighborhood luminance median; often suppresses isolated impulse noise, can erase small features."
+    },
+    {
+      "id": "unsharp",
+      "category": "spatial",
+      "label": "Unsharp Mask",
+      "implementation": "spatial_filter",
+      "parameters": {
+        "kernelSize": {
+          "default": 5,
+          "min": 3,
+          "max": 15,
+          "integer": true,
+          "odd": true,
+          "label": "Kernel size (odd pixels)"
+        },
+        "sigma": {
+          "default": 1,
+          "min": 0.3,
+          "max": 3,
+          "label": "Blur sigma (pixels)"
+        },
+        "amount": {
+          "default": 1,
+          "min": 0,
+          "max": 3,
+          "label": "Sharpening strength"
+        }
+      },
+      "constraints": [],
+      "description": "Luminance plus amount times its Gaussian high-frequency difference. Can amplify noise."
+    },
+    {
+      "id": "sobel",
+      "category": "spatial",
+      "label": "Sobel",
+      "implementation": "spatial_filter",
+      "parameters": {},
+      "constraints": [],
+      "description": "Fixed 3x3 gradient magnitude with fixed scaling; returns a grayscale edge map, not a denoised photograph."
+    }
+  ],
+  "noise": {
+    "salt-pepper": {
+      "parameter": "density",
+      "min": 0,
+      "max": 0.3,
+      "default": 0.05
+    },
+    "gaussian": {
+      "parameter": "standardDeviation",
+      "min": 0,
+      "max": 0.2,
+      "default": 0.05
+    }
+  },
+  "noiseRestrictions": "Noise generation is a separate action from clean original, never a sequence operation. RGB channels share samples. Gaussian noise sigma is normalized standard deviation. Seed is an integer 0\u20134294967295."
+}

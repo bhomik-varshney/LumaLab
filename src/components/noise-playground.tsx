@@ -1,3 +1,4 @@
+import type { SequenceRecommendation } from "@/lib/learning-context";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { addNoise, enhanceImage } from "@/lib/matlab-api";
 import type {
@@ -19,11 +20,21 @@ export function NoisePlayground({
   fileName,
   health,
   onUpload,
+  onNoiseChange,
+  onAccept,
+  sequenceLength = 0,
 }: {
   clean: ProcessingResult | null;
   fileName: string;
   health: Health;
   onUpload: () => void;
+  onNoiseChange?: (value: ProcessingResult | null) => void;
+  onAccept?: (
+    recommendation: SequenceRecommendation,
+    mode: "append" | "replace",
+    noisy: ProcessingResult | null,
+  ) => string | null;
+  sequenceLength?: number;
 }) {
   const [type, setType] = useState<NoiseSettings["type"]>("salt-pepper");
   const [density, setDensity] = useState(5);
@@ -99,6 +110,7 @@ export function NoisePlayground({
       const output = await addNoise(clean.imageId, { ...noise, seed: nextSeed }, controller.signal);
       if (!controller.signal.aborted) {
         setNoisy(output);
+        onNoiseChange?.(output);
         setFiltered(null);
       }
     } catch (error) {
@@ -158,6 +170,16 @@ export function NoisePlayground({
         original. Saved studio sequences stay separate.
       </p>
       <LearningAssistant
+        sourceKey={`${clean?.imageId ?? "empty"}:${noisy?.noisyImageId ?? "none"}`}
+        sourceLabel={`${fileName}${noisy?.noise ? ` · ${noisy.noise.type === "salt-pepper" ? `salt-and-pepper ${noisy.noise.density * 100}%` : `Gaussian σ ${noisy.noise.standardDeviation}`} · seed ${noisy.noise.seed}` : " · clean original"}`}
+        sequenceLength={sequenceLength}
+        acceptDisabled={!!busy || !ready}
+        {...(onAccept
+          ? {
+              onAccept: (recommendation: SequenceRecommendation, mode: "append" | "replace") =>
+                onAccept(recommendation, mode, noisy),
+            }
+          : {})}
         context={{
           mode: "noise",
           status: !clean
@@ -480,6 +502,7 @@ export function NoisePlayground({
               disabled={!!busy}
               onClick={() => {
                 setNoisy(null);
+                onNoiseChange?.(null);
                 setFiltered(null);
                 setError("");
                 setSeed(42);

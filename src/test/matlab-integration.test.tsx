@@ -453,3 +453,28 @@ describe("MATLAB frontend integration", () => {
     expect(runSequence).toHaveBeenCalledTimes(2);
   });
 });
+
+it("a rejected AI recommendation leaves the manual sequence available and never executes automatically", async () => {
+  const { container } = render(<LumaLab />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+  fireEvent.click(screen.getByText("Processing Sequence"));
+  fireEvent.click(screen.getByRole("button", { name: "Add step" }));
+  vi.mocked(fetch).mockResolvedValueOnce(
+    Response.json({
+      explanation: "## What to try next\n\nUse a **supported** method.",
+      recommendation: null,
+      recommendationIssue: "Step 1 cannot be used: unsupported operation.",
+      truncated: false,
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: /AI Learning Assistant/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Suggest what to try next" }));
+  await screen.findByText(/Not executable/);
+  expect(screen.queryByRole("button", { name: "Review sequence" })).not.toBeInTheDocument();
+  expect(container.querySelectorAll(".sequence-step-list > li")).toHaveLength(1);
+  expect(runSequence).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Run sequence" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Run sequence" }));
+  await waitFor(() => expect(runSequence).toHaveBeenCalledOnce());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+});

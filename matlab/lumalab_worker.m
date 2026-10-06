@@ -1,7 +1,8 @@
 function lumalab_worker(workDir)
 % One MATLAB process handles an atomic filesystem queue owned by the bridge.
 toolboxAvailable = ~isempty(ver('images')) && license('test', 'image_toolbox');
-write_json(fullfile(workDir, 'ready.json'), struct('version', version, 'toolbox', toolboxAvailable));
+identifiers = available_operation_ids();
+write_json(fullfile(workDir, 'ready.json'), struct('version', version, 'toolbox', toolboxAvailable,'operations',{identifiers}));
 while ~isfile(fullfile(workDir, 'stop'))
     requests = dir(fullfile(workDir, '*.request.json'));
     for index = 1:numel(requests)

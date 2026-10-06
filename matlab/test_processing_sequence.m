@@ -1,4 +1,5 @@
 function test_processing_sequence()
+assert(isequal(sort(available_operation_ids()),sort({'gamma','equalize','stretch','mean','gaussian','median','unsharp','sobel'})));
 folder = tempname; mkdir(folder);
 cleanup = onCleanup(@() rmdir(folder,'s'));
 [x,y] = meshgrid(0:24,0:22);

@@ -1,3 +1,4 @@
+import { operationRegistry } from "../shared/operations.mjs";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, writeFile, rename, rm, readdir, access } from "node:fs/promises";
@@ -28,6 +29,7 @@ let status = "offline";
 let detail = "Starting MATLAB…";
 let version;
 let toolbox = false;
+let workerOperations = [];
 let starting;
 let pending = 0;
 let closing = false;
@@ -102,6 +104,11 @@ async function startWorker() {
           const ready = JSON.parse(await readFile(join(workDir, "ready.json"), "utf8"));
           version = ready.version;
           toolbox = ready.toolbox;
+          workerOperations = Array.isArray(ready.operations)
+            ? ready.operations.filter((id) =>
+                operationRegistry.operations.some((item) => item.id === id),
+              )
+            : [];
           status = "ready";
           detail = `MATLAB ${version} ready · ${toolbox ? "Image Processing Toolbox installed" : "base MATLAB algorithms (Image Processing Toolbox not installed)"}`;
           console.log(detail);
@@ -297,9 +304,19 @@ const server = createServer(async (request, response) => {
         if (error.statusCode) throw error;
         throw fail("Invalid JSON request.");
       }
-      send(200, await explainLearning(input));
+      send(
+        200,
+        await explainLearning(input, { availableIds: status === "ready" ? workerOperations : [] }),
+      );
     } else if (request.method === "GET" && request.url === "/api/matlab/health") {
-      send(200, { status, detail, version, toolbox, processor: "MATLAB" });
+      send(200, {
+        status,
+        detail,
+        version,
+        toolbox,
+        operations: workerOperations,
+        processor: "MATLAB",
+      });
     } else if (
       request.method === "GET" &&
       /^\/api\/matlab\/progress\/[a-f\d-]{36}$/i.test(request.url)
@@ -350,8 +367,8 @@ const server = createServer(async (request, response) => {
         input.noise !== undefined
           ? noiseOptions(input)
           : input.steps === undefined
-            ? processingOptions(input)
-            : sequenceOptions(input);
+            ? processingOptions(input, { availableIds: workerOperations })
+            : sequenceOptions(input, { availableIds: workerOperations });
       send(200, await processImage(input.imageId, options));
     } else send(404, { error: "Unknown API route." });
   } catch (error) {

@@ -128,8 +128,8 @@ MATLAB-capable server.
 Expand **Processing Sequence** below the method controls. Configure one operation
 using the existing controls and click **Add step** to save its parameter snapshot.
 Add up to six steps, move them using the up/down buttons, or remove a step. Later
-control changes never modify saved steps; to edit one, remove it and add the new
-settings. **Run sequence** always starts with the current original image and
+control changes never modify saved steps; use the pencil on a saved step to edit its parameters, or remove it and add new
+settings. **Run sequence** starts with the explicitly selected sequence input (clean original by default) and
 applies the saved steps in the displayed order. All eight methods are supported.
 
 For example: Original → Gamma (γ 0.70) → Median (5×5) → Stretch (low 5%, high 95%)
@@ -185,7 +185,8 @@ output, with its actual MATLAB histogram and statistics. Edited settings label
 older results as previous and block stale export. **Save noisy image** and **Save
 filtered image** download the respective MATLAB PNG with noise/filter/seed labels.
 **Reset playground** clears noisy and filtered results and restores the clean view;
-it leaves the normal studio and its saved sequence untouched. Mode switches retain
+it leaves the saved sequence steps untouched. A sequence bound to the reset noisy
+image is blocked until the student explicitly chooses a valid input. Mode switches retain
 the experiment; replacing the source image starts a fresh experiment. Histograms
 and contrast spread are not restoration-quality scores.
 
@@ -222,7 +223,7 @@ For this request, the supplied credentials were configured in the ignored local
 from this documentation. Restart `npm run dev:full` after changing configuration.
 Do not use `VITE_` variables for credentials. The bridge reads its own file;
 frontend tooling never loads it. Real `.env` files are ignored, while the blank
-`.env.example` is safe to commit. No new dependency is required.
+`.env.example` is safe to commit. Credentials remain in the existing server configuration.
 
 The server calls Groq's documented [Chat Completions endpoint](https://console.groq.com/docs/api-reference).
 Only allowlisted metadata is sent: selected parameters, saved and completed ordered
@@ -236,12 +237,73 @@ execute MATLAB or alter pixels. Explanations can still be mistaken.
 
 Backend validation limits JSON to 16 KiB, questions to 800 characters, sequences to
 six steps, active AI calls to two, requests to 25 seconds, provider responses to
-64 KiB, explanation text to 8,000 characters and completion tokens to 1,800.
+64 KiB, explanation text to 8,000 characters and completion tokens to 2,400.
 Missing configuration, rate limits, invalid models/credentials, network failures,
 timeouts and malformed responses return safe, actionable errors. Credentials,
 questions, provider payloads and raw provider errors are not logged. This optional
 cloud feature needs internet access and an available model in your Groq account.
 The Noise Playground works independently of Groq.
+
+## Formatted answers and reviewed AI sequences
+
+Assistant answers use `react-markdown` with `remark-gfm` for headings, emphasis,
+paragraphs, line breaks, lists, inline/fenced code and useful comparison tables.
+These two maintained libraries were added because the project had no Markdown
+renderer; using a standard parser avoids maintaining a custom Markdown parser.
+The renderer never enables raw HTML, restricts output elements, removes images and
+embedded media, and allows only HTTP(S) links with safe external-link attributes.
+A rendering error produces readable plain text. Copy explanation copies plain text.
+The existing API returns completed responses; no new streaming transport was added.
+See [react-markdown's security guidance](https://github.com/remarkjs/react-markdown#security).
+
+The Groq system prompt asks for concise **What happened**, **Why it happened** and
+optional **What to try next** sections. Its JSON envelope contains readable Markdown
+and an optional structured sequence; students never see the envelope. Ordinary
+explanations do not have to recommend a sequence. Malformed/unsupported suggestions
+show **Not executable** with a reason, while manual processing stays available.
+
+`shared/operations.json` is the authoritative registry for the eight implemented
+operations, categories, defaults, numeric limits, odd-kernel constraints and input
+rules. `shared/operations.mjs` validates bridge processing and recommendations, and
+also supplies frontend validation/editing. MATLAB's `registered_operations.m`
+reads that same file; `apply_operation.m` uses its parameters/defaults/constraints.
+At startup, `available_operation_ids.m` probes the installed dispatcher with a tiny
+internal fixture and advertises only successful operations in worker readiness and
+health. Groq receives that available subset, including descriptions, exact IDs and
+parameter rules. Restart the backend after changing the registry or implementations.
+Noise is a separate registered action and cannot be inserted into a recommended
+sequence. No planned or unsupported operations are advertised as executable.
+
+Groq JSON-object mode is used through its [documented Chat Completions API](https://console.groq.com/docs/reasoning).
+The backend requires every recommendation parameter explicitly and validates all
+steps before returning an executable preview. It rejects unknown/unavailable IDs,
+missing/extra/nonfinite/out-of-range parameters, even kernels, invalid source
+bindings, oversized sequences and truncated recommendations. It never clamps,
+substitutes parameters or automatically repairs a suggestion into a different one.
+
+The student workflow is:
+
+1. Ask for an explanation or optional experiment.
+2. Inspect the compact **AI suggestion** with ordered methods, parameters, optional
+   per-step explanations and the source image/noise realization it was based on.
+3. Choose **Review sequence**, then **Use this sequence** or **Append steps**.
+   Replacing existing steps requires a separate **Confirm replacement** decision.
+4. The accepted snapshots become ordinary steps in the existing sequence builder.
+   Use the pencil to edit parameters, move steps, remove steps, or choose an input.
+5. Click the existing **Run sequence** action to invoke MATLAB. Reviewing, accepting,
+   editing, appending and replacing do not process the image or change method controls.
+
+Recommendations become unavailable for acceptance when their image/context changes.
+A noisy-input recommendation binds to the reviewed realization's separate image ID;
+its type, strength and seed are shown for review. Appending across different saved
+input sources is blocked until the student makes an explicit source/replacement
+choice. Regenerating/resetting noise or replacing the clean source blocks that saved
+binding. The sequence input selector offers the current noise or clean original
+explicitly; it never silently switches them. Successful noisy-input sequences can
+be compared with **Noisy sequence input** or **Clean original**; their histograms and
+statistics follow the selected comparison. Save downloads the actual MATLAB final
+PNG with a `noisy-sequence` filename. Error/progress handling remains shared with
+manual sequences, and no partial/stale result is exported as current.
 
 ## Interactive filter walkthrough
 
@@ -418,8 +480,7 @@ histograms/statistics and independent mean/median filtering of the noisy pixels.
 The live API check independently uploads the noisy PNG and matches the derived-ID
 filter output, confirming it consumes noise rather than the clean original.
 
-There are 19 frontend/calculation tests, including five new noise/assistant cases,
-and five isolated Node bridge tests. The latter use an explicitly stubbed provider
+There are 28 frontend/calculation tests and ten isolated Node bridge tests. The latter use an explicitly stubbed provider
 to test missing configuration, request construction, malformed/oversized responses,
 credential-safe errors, provider/network failures and timeouts. Real Groq calls
 also succeeded using the supplied local credentials/model through the implemented
@@ -429,3 +490,18 @@ labels, clean/noisy comparisons, actual histograms, exact downloaded PNG bytes,
 reset/regeneration, AI grounding and live response, injected failure/retry, normal
 processing independence and responsive layouts. The credential value was checked
 against browser-facing responses and generated frontend assets, without printing it.
+
+Formatting/recommendation verification covers headings, emphasis, numbered/bulleted
+lists, code, line breaks, tables, unsafe HTML/links/images and an injected renderer
+failure. Isolated provider tests confirm that the sent capabilities equal the shared
+registry's available subset and reject unsupported IDs, missing settings, invalid
+kernels/ranges, unavailable sources and malformed/truncated structured output.
+UI tests check explicit acceptance, append, confirmed replacement, sequence limits,
+stale recommendations and rejected suggestions leaving manual execution available.
+A live Groq call returned a valid two-step recommendation; browser review/accept/edit
+and explicit MATLAB execution succeeded. The browser also used clearly isolated
+injected recommendations to test append/replacement, unsafe formatting and a noisy
+source, then ran that accepted noisy sequence through real MATLAB. Both final PNG
+downloads matched the returned bytes. Request counts proved no processing before
+Run sequence. Reset noise blocked the old binding, clean comparison remained
+available, and layouts at 320/390/768/1280 pixels had no horizontal overflow.

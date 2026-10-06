@@ -4,6 +4,9 @@ export type Measurement = ImageInfo & {
 };
 export type LearningContext = {
   mode: "studio" | "noise";
+  workflow?: "single" | "sequence";
+  sequenceInput?: "original" | "noisy";
+  resultInput?: "original" | "noisy";
   status: "empty" | "processing" | "ready" | "error" | "stale";
   selected: ProcessingOptions | null;
   sequence: ProcessingOptions[];
@@ -30,7 +33,7 @@ export async function explainLearning(
   question: string,
   context: LearningContext,
   signal: AbortSignal,
-): Promise<{ explanation: string; truncated: boolean }> {
+): Promise<LearningAnswer> {
   let response;
   try {
     response = await fetch("/api/matlab/learning", {
@@ -55,3 +58,17 @@ export async function explainLearning(
     throw new Error("The assistant returned an invalid response. Retry.");
   return payload;
 }
+
+export type SequenceRecommendation = {
+  type: "sequence_recommendation";
+  title: string;
+  reason: string;
+  input: "original" | "noisy";
+  steps: (ProcessingOptions & { explanation: string })[];
+};
+export type LearningAnswer = {
+  explanation: string;
+  truncated: boolean;
+  recommendation?: SequenceRecommendation | null;
+  recommendationIssue?: string;
+};

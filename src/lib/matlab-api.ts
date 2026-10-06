@@ -46,7 +46,11 @@ export type SequenceProgress = {
   method?: Method;
   error?: string;
 };
-export type Health = { status: "starting" | "ready" | "offline"; detail: string };
+export type Health = {
+  status: "starting" | "ready" | "offline";
+  detail: string;
+  operations?: Method[];
+};
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;

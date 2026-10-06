@@ -1,11 +1,29 @@
-import { ChevronDown, ChevronUp, Layers3, Play, Plus, Trash2, X, Check } from "lucide-react";
+import { useState } from "react";
+import type { ReactNode, Ref } from "react";
+import { SequenceStepEditor } from "./sequence-step-editor";
+import {
+  Pencil,
+  ChevronDown,
+  ChevronUp,
+  Layers3,
+  Play,
+  Plus,
+  Trash2,
+  X,
+  Check,
+} from "lucide-react";
 import { methods, describeOperation } from "@/lib/enhancement-methods";
 import { MAX_SEQUENCE_STEPS } from "@/lib/processing-sequence";
 import type { SequencePhase, SequenceStep } from "@/lib/processing-sequence";
-import type { SequenceProgress } from "@/lib/matlab-api";
+import type { ProcessingOptions, SequenceProgress } from "@/lib/matlab-api";
 
 type Props = {
   steps: SequenceStep[];
+  builderRef?: Ref<HTMLDetailsElement>;
+  inputLabel?: string;
+  inputControls?: ReactNode;
+  validationError?: string;
+  onEdit?: (id: string, options: ProcessingOptions) => void;
   phase: SequencePhase;
   progress: SequenceProgress | null;
   error: string;
@@ -34,7 +52,13 @@ export function ProcessingSequence({
   onClear,
   onRemove,
   onMove,
+  builderRef,
+  inputLabel = "Original image",
+  inputControls,
+  validationError,
+  onEdit,
 }: Props) {
+  const [editingId, setEditingId] = useState<string | null>(null);
   const running = phase === "running";
   const activeName = methods.find((item) => item.id === progress?.method)?.name;
   const status = running
@@ -47,7 +71,7 @@ export function ProcessingSequence({
       ? `Complete · ${steps.length} steps applied.`
       : "";
   return (
-    <details className="processing-sequence">
+    <details ref={builderRef} className="processing-sequence">
       <summary>
         <Layers3 size={15} />
         <span>Processing Sequence</span>
@@ -58,8 +82,14 @@ export function ProcessingSequence({
       </summary>
       <div className="sequence-body">
         <p className="sequence-intro">
-          Each step uses the previous result. Runs start from your original image.
+          Each step uses the previous result. The selected input stays separate from the output.
         </p>
+        {inputControls}
+        {validationError && (
+          <p role="alert" className="sequence-error">
+            {validationError}
+          </p>
+        )}
         <div className="sequence-actions">
           <button
             type="button"
@@ -74,7 +104,7 @@ export function ProcessingSequence({
             type="button"
             className="studio-button primary"
             onClick={onRun}
-            disabled={!canRun || running || !steps.length}
+            disabled={!canRun || running || !steps.length || !!validationError}
           >
             <Play size={13} />
             {running ? "Running…" : "Run sequence"}
@@ -91,11 +121,12 @@ export function ProcessingSequence({
           <>
             <div className="sequence-endpoint">
               <i />
-              Original image
+              {inputLabel}
             </div>
             <ol className="sequence-step-list">
               {steps.map((step, index) => {
-                const name = methods.find((item) => item.id === step.method)!.name;
+                const name =
+                  methods.find((item) => item.id === step.method)?.name ?? "Unavailable operation";
                 const complete =
                   isCurrentResult || (running && index < (progress?.completedSteps ?? 0));
                 const active =
@@ -115,6 +146,17 @@ export function ProcessingSequence({
                       <span>{describeOperation(step)}</span>
                     </div>
                     <div className="sequence-edit-actions">
+                      {onEdit && (
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label={`Edit step ${index + 1}: ${name}`}
+                          disabled={running || !methods.some((item) => item.id === step.method)}
+                          onClick={() => setEditingId(step.id)}
+                        >
+                          <Pencil size={12} />
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="icon-button"
@@ -146,6 +188,16 @@ export function ProcessingSequence({
                         <X size={13} />
                       </button>
                     </div>
+                    {editingId === step.id && onEdit && (
+                      <SequenceStepEditor
+                        step={step}
+                        onCancel={() => setEditingId(null)}
+                        onSave={(options) => {
+                          onEdit(step.id, options);
+                          setEditingId(null);
+                        }}
+                      />
+                    )}
                   </li>
                 );
               })}
@@ -178,7 +230,7 @@ export function ProcessingSequence({
           <p className="sequence-hint">{runHint}</p>
         )}
         <div className="sequence-footer">
-          <span>Reset keeps saved steps. Remove and re-add a step to edit it.</span>
+          <span>Reset keeps saved steps. Use the pencil to edit saved parameters.</span>
           <button
             type="button"
             className="text-button"

@@ -1,3 +1,4 @@
+import { operationRegistry } from "../../shared/operations.mjs";
 import type { Category, Method, Parameters, ProcessingResult } from "./matlab-api";
 
 export const categories: { id: Category; name: string; description: string }[] = [
@@ -12,7 +13,7 @@ export const categories: { id: Category; name: string; description: string }[] =
     description: "Use nearby pixels to smooth, sharpen, or reveal edges.",
   },
 ];
-export const methods: {
+const descriptions: {
   id: Method;
   category: Category;
   name: string;
@@ -81,6 +82,13 @@ export const methods: {
     explanation: "Highlight edges by measuring horizontal and vertical intensity changes.",
   },
 ];
+
+export const methods = operationRegistry.operations.map((definition) => ({
+  ...descriptions.find((item) => item.id === definition.id)!,
+  id: definition.id,
+  category: definition.category,
+  name: definition.label,
+}));
 
 export function describeResult(result: ProcessingResult) {
   const { method, parameters: p } = result;

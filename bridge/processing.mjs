@@ -1,89 +1,15 @@
-const intensityMethods = ["gamma", "equalize", "stretch"];
-const spatialMethods = ["mean", "gaussian", "median", "unsharp", "sobel"];
+import { operationRegistry, validateOperation } from "../shared/operations.mjs";
 const invalid = (message) => {
   throw Object.assign(new Error(message), { statusCode: 400 });
 };
-const finite = (value) => typeof value === "number" && Number.isFinite(value);
+export const processingOptions = validateOperation;
 
-export function processingOptions(input) {
-  const { method } = input;
-  if (![...intensityMethods, ...spatialMethods].includes(method))
-    invalid("Choose a supported intensity transformation or spatial filter.");
-  const category = intensityMethods.includes(method) ? "intensity" : "spatial";
-  if (input.category !== undefined && input.category !== category)
-    invalid("The selected category does not match the method.");
-  const fields = {
-    gamma: ["gamma"],
-    equalize: [],
-    stretch: ["lowCutoff", "highCutoff"],
-    mean: ["kernelSize"],
-    median: ["kernelSize"],
-    gaussian: ["kernelSize", "sigma"],
-    unsharp: ["kernelSize", "sigma", "amount"],
-    sobel: [],
-  }[method];
-  const defaults = {
-    gamma: 1,
-    lowCutoff: 0.1,
-    highCutoff: 0.9,
-    kernelSize: ["gaussian", "unsharp"].includes(method) ? 5 : 3,
-    sigma: 1,
-    amount: 1,
-  };
-  let supplied;
-  if (input.parameters !== undefined) {
-    if (
-      !input.parameters ||
-      typeof input.parameters !== "object" ||
-      Array.isArray(input.parameters)
-    )
-      invalid("Method parameters must be a JSON object.");
-    supplied = input.parameters;
-    if (Object.keys(supplied).some((key) => !fields.includes(key)))
-      invalid("Only send parameters for the selected method.");
-  } else {
-    // Retain the established flat intensity requests for existing callers.
-    supplied = Object.fromEntries(
-      fields.filter((key) => input[key] !== undefined).map((key) => [key, input[key]]),
-    );
-  }
-  const parameters = Object.fromEntries(
-    fields.map((key) => [key, supplied[key] === undefined ? defaults[key] : supplied[key]]),
-  );
-  if (method === "gamma" && (!finite(parameters.gamma) || parameters.gamma <= 0))
-    invalid("Gamma must be a finite positive number.");
+export function sequenceOptions(input, validation = {}) {
   if (
-    method === "stretch" &&
-    (!finite(parameters.lowCutoff) ||
-      !finite(parameters.highCutoff) ||
-      parameters.lowCutoff < 0 ||
-      parameters.highCutoff > 1 ||
-      parameters.highCutoff - parameters.lowCutoff < 1e-6)
+    !Array.isArray(input.steps) ||
+    input.steps.length < 1 ||
+    input.steps.length > operationRegistry.maxSequenceSteps
   )
-    invalid("Cutoffs must be within 0–100%, with low below high.");
-  if (
-    fields.includes("kernelSize") &&
-    (!Number.isInteger(parameters.kernelSize) ||
-      parameters.kernelSize < 3 ||
-      parameters.kernelSize > 15 ||
-      parameters.kernelSize % 2 !== 1)
-  )
-    invalid("Kernel size must be an odd integer from 3 to 15.");
-  if (
-    fields.includes("sigma") &&
-    (!finite(parameters.sigma) || parameters.sigma < 0.3 || parameters.sigma > 3)
-  )
-    invalid("Gaussian sigma must be between 0.3 and 3.");
-  if (
-    fields.includes("amount") &&
-    (!finite(parameters.amount) || parameters.amount < 0 || parameters.amount > 3)
-  )
-    invalid("Sharpening strength must be between 0 and 3.");
-  return { category, method, parameters };
-}
-
-export function sequenceOptions(input) {
-  if (!Array.isArray(input.steps) || input.steps.length < 1 || input.steps.length > 6)
     invalid("Add between 1 and 6 operations to the processing sequence.");
   if (["category", "method", "parameters"].some((key) => input[key] !== undefined))
     invalid("Send either a single operation or a sequence of steps.");
@@ -91,7 +17,7 @@ export function sequenceOptions(input) {
     try {
       if (!step || typeof step !== "object" || Array.isArray(step))
         invalid("Choose a method and its parameters.");
-      return processingOptions(step);
+      return processingOptions(step, validation);
     } catch (error) {
       invalid(`Step ${index + 1} failed validation: ${error.message}`);
     }

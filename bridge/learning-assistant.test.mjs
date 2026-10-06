@@ -76,9 +76,9 @@ test("configured path constructs only grounded metadata and respects supplied mo
     },
   });
   assert.equal(sent.model, env.GROQ_MODEL);
-  assert.equal(sent.max_completion_tokens, 1800);
+  assert.equal(sent.max_completion_tokens, 2400);
   assert.equal(sent.tools, undefined);
-  assert.match(sent.messages[0].content, /cannot see images/);
+  assert.match(sent.messages[0].content, /never image pixels/);
   assert.deepEqual(JSON.parse(sent.messages[1].content).context.selected.parameters, {
     kernelSize: 5,
   });

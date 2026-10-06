@@ -10,4 +10,4 @@
 <!-- LOVABLE:END -->
 
 ## Architecture decisions
-- Keep the interactive image laboratory on the index route and perform prototype image transforms with the browser Canvas API, so it works without accounts or a server and clearly remains separate from a future MATLAB integration.
+- Keep the interactive image laboratory on the index route and preserve its visual design. Enhancement runs through the local Node bridge and persistent MATLAB worker; base MATLAB algorithms do not require Image Processing Toolbox. Do not present browser previews as MATLAB results. Run the complete local app with `npm run dev:full`.

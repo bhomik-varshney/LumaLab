@@ -2293,3 +2293,113 @@ input[type="range"]::-moz-range-thumb {
   margin-bottom: 7px;
   font-variant-numeric: tabular-nums;
 }
+
+/* Optional experiment and metadata-only AI explanations. */
+.workspace-modes {
+  width: fit-content;
+  margin: 18px 0;
+}
+.noise-intro {
+  color: var(--muted-foreground);
+  margin: 12px 0 20px;
+  font-size: 13px;
+}
+.noise-actions,
+.assistant-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.noise-export {
+  padding: 18px 0;
+}
+.noise-grid select {
+  width: 100%;
+  background: #222724;
+  color: #eee;
+  border: 1px solid #414942;
+  border-radius: 7px;
+  padding: 10px;
+  margin: 8px 0 18px;
+}
+.noise-grid label {
+  font-size: 13px;
+}
+.noise-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  padding: 30px;
+  color: #b7c0b8;
+  font-size: 13px;
+}
+.assistant-panel {
+  border: 1px solid #38463d;
+  border-radius: 12px;
+  background: #1a211d;
+  margin-bottom: 22px;
+  padding: 14px 18px;
+}
+.assistant-toggle {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.assistant-toggle span {
+  font-size: 11px;
+  color: #aab9ad;
+}
+.assistant-body {
+  padding-top: 14px;
+}
+.assistant-body label {
+  display: block;
+  font-size: 13px;
+  margin: 12px 0 6px;
+}
+.assistant-body label span {
+  color: #aab9ad;
+}
+.assistant-body textarea {
+  width: 100%;
+  background: #141a16;
+  color: #f3f2ed;
+  border: 1px solid #435048;
+  border-radius: 7px;
+  padding: 10px;
+  resize: vertical;
+  font-size: 13px;
+}
+.assistant-body > p {
+  font-size: 13px;
+}
+.ai-explanation {
+  border-left: 2px solid #a9cf87;
+  margin-top: 18px;
+  padding: 10px 16px;
+  background: #202920;
+}
+.ai-answer {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+  font-size: 13px;
+  margin: 10px 0;
+}
+@media (max-width: 600px) {
+  .noise-grid .preview-toolbar {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .noise-grid .studio-button {
+    font-size: 11px;
+  }
+  .assistant-panel {
+    padding: 12px;
+  }
+}

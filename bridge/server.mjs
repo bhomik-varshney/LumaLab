@@ -5,9 +5,17 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { loadEnvFile } from "node:process";
+import { explainLearning } from "./learning-assistant.mjs";
+import { noiseOptions } from "./noise.mjs";
 import { processingOptions, sequenceOptions } from "./processing.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+try {
+  loadEnvFile(join(root, "bridge", ".env"));
+} catch (error) {
+  if (error.code !== "ENOENT") throw new Error("Cannot read bridge/.env. Check its format.");
+}
 const workDir = await mkdtemp(join(tmpdir(), "lumalab-"));
 const port = Number(process.env.MATLAB_BRIDGE_PORT || 3001);
 const maxBytes = 10 * 1024 * 1024;
@@ -125,7 +133,7 @@ async function body(request, limit) {
     size += chunk.length;
     if (size > limit)
       throw fail(
-        `Upload is too large. Maximum file size is ${limit === maxBytes ? "10 MB" : "4 KB"}.`,
+        `Upload is too large. Maximum file size is ${limit === maxBytes ? "10 MB" : `${limit / 1024} KB`}.`,
         413,
       );
     chunks.push(chunk);
@@ -209,10 +217,28 @@ async function processImage(imageId, options) {
       const payload = JSON.parse(raw);
       if (!payload.ok) throw fail(`MATLAB could not process this image: ${payload.error}`, 422);
       const [output, original] = await Promise.all([readFile(outputPath), readFile(originalPath)]);
+      let noisyImageId;
+      if (options.noise) {
+        noisyImageId = randomUUID();
+        const noisyPath = join(workDir, `${noisyImageId}.png`);
+        await writeFile(noisyPath, output);
+        images.set(noisyImageId, { path: noisyPath, usedAt: Date.now(), derived: true });
+        // Bound retained realizations without expiring a currently filtering image.
+        const derived = [...images].filter(([, value]) => value.derived);
+        let excess = derived.length - 16;
+        for (const [oldId, value] of derived) {
+          if (excess <= 0) break;
+          if (activeImages.has(oldId)) continue;
+          images.delete(oldId);
+          await rm(value.path, { force: true });
+          excess--;
+        }
+      }
       return {
         ...payload.result,
         imageId,
         ...(runId ? { runId } : {}),
+        ...(noisyImageId ? { noisyImageId } : {}),
         url: `data:image/png;base64,${output.toString("base64")}`,
         originalUrl: `data:image/png;base64,${original.toString("base64")}`,
       };
@@ -261,7 +287,18 @@ const server = createServer(async (request, response) => {
     response.end(JSON.stringify(value));
   };
   try {
-    if (request.method === "GET" && request.url === "/api/matlab/health") {
+    if (request.method === "POST" && request.url === "/api/matlab/learning") {
+      if (request.headers["content-type"] !== "application/json")
+        throw fail("Use application/json.", 415);
+      let input;
+      try {
+        input = JSON.parse((await body(request, 16384)).toString());
+      } catch (error) {
+        if (error.statusCode) throw error;
+        throw fail("Invalid JSON request.");
+      }
+      send(200, await explainLearning(input));
+    } else if (request.method === "GET" && request.url === "/api/matlab/health") {
       send(200, { status, detail, version, toolbox, processor: "MATLAB" });
     } else if (
       request.method === "GET" &&
@@ -281,7 +318,7 @@ const server = createServer(async (request, response) => {
       const jpeg = bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
       if (!(type === "image/png" ? png : jpeg))
         throw fail("File contents do not match a valid PNG or JPEG image.", 415);
-      if (images.size >= 32)
+      if ([...images.values()].filter((image) => !image.derived).length >= 32)
         throw fail(
           "Upload limit reached. Restart the backend or wait for old images to expire.",
           429,
@@ -309,7 +346,12 @@ const server = createServer(async (request, response) => {
       }
       if (!input || typeof input.imageId !== "string")
         throw fail("A valid uploaded imageId is required.");
-      const options = input.steps === undefined ? processingOptions(input) : sequenceOptions(input);
+      const options =
+        input.noise !== undefined
+          ? noiseOptions(input)
+          : input.steps === undefined
+            ? processingOptions(input)
+            : sequenceOptions(input);
       send(200, await processImage(input.imageId, options));
     } else send(404, { error: "Unknown API route." });
   } catch (error) {

@@ -26,8 +26,8 @@ export type ProcessingResult = {
   enhanced: ImageInfo;
   histograms: { original: number[]; enhanced: number[] };
   processor: "MATLAB";
-  category: Category | "sequence";
-  method: Method | "sequence";
+  category: Category | "sequence" | "noise";
+  method: Method | "sequence" | "noise";
   parameters: Parameters;
   outputKind: "enhanced" | "edge-map";
   gamma: number;
@@ -35,6 +35,8 @@ export type ProcessingResult = {
   highCutoff: number;
   steps?: (ProcessingOptions & { output: ImageInfo })[];
   runId?: string;
+  noise?: NoiseSettings;
+  noisyImageId?: string;
 };
 export type SequenceProgress = {
   state: "queued" | "processing" | "exporting" | "complete" | "error";
@@ -96,3 +98,14 @@ export const runSequence = (
   });
 export const checkSequenceProgress = (runId: string, signal: AbortSignal) =>
   request<SequenceProgress>(`progress/${runId}`, { signal });
+
+export type NoiseSettings =
+  | { type: "salt-pepper"; density: number; seed: number }
+  | { type: "gaussian"; standardDeviation: number; seed: number };
+export const addNoise = (imageId: string, noise: NoiseSettings, signal: AbortSignal) =>
+  request<ProcessingResult>("process", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ imageId, noise }),
+    signal,
+  });

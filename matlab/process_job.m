@@ -9,7 +9,11 @@ if ~isempty(map)
 end
 outputKind = 'enhanced';
 completed = {};
-if isfield(job,'steps')
+if isfield(job,'noise')
+    [output, noise] = add_image_noise(input, job.noise);
+    operation = struct('category','noise','method','noise','parameters',struct(), ...
+        'gamma',1,'lowCutoff',0.1,'highCutoff',0.9);
+elseif isfield(job,'steps')
     steps = job.steps;
     if ~(iscell(steps) || isstruct(steps)) || isempty(steps) || numel(steps) > 6
         error('LumaLab:Sequence','Add between 1 and 6 operations to the sequence.');
@@ -54,6 +58,7 @@ result = struct('original',originalInfo,'enhanced',enhancedInfo, ...
     'category',operation.category,'method',operation.method,'parameters',operation.parameters, ...
     'outputKind',outputKind,'gamma',operation.gamma,'lowCutoff',operation.lowCutoff, ...
     'highCutoff',operation.highCutoff,'processor','MATLAB');
+if isfield(job,'noise'), result.noise = noise; end
 if isfield(job,'steps')
     result.steps = completed;
     progress.state = 'complete';

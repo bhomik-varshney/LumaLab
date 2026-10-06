@@ -31,6 +31,10 @@ import type {
 } from "@/lib/matlab-api";
 
 import { categories, methods, describeResult } from "@/lib/enhancement-methods";
+import { Histogram } from "@/components/histogram";
+import { NoisePlayground } from "@/components/noise-playground";
+import { LearningAssistant } from "@/components/learning-assistant";
+import { measuredContext } from "@/lib/learning-context";
 import { FilterControls, NeighborhoodDiagram } from "@/components/filter-controls";
 import { FilterSimulation } from "@/components/filter-simulation";
 import { isValidKernelSize } from "@/lib/filter-settings";
@@ -66,6 +70,8 @@ export const Route = createFileRoute("/")({
 });
 
 function LumaLab() {
+  const [noiseOpened, setNoiseOpened] = useState(false);
+  const [workspaceMode, setWorkspaceMode] = useState<"studio" | "noise">("studio");
   const [imageUrl, setImageUrl] = useState(sampleImage);
   const [fileName, setFileName] = useState("alpine-dawn-demo.jpg");
   const [isDemo, setIsDemo] = useState(true);
@@ -558,15 +564,17 @@ function LumaLab() {
             <Upload size={15} />
             <span>Upload image</span>
           </button>
-          <button
-            type="button"
-            className="studio-button primary"
-            onClick={saveImage}
-            disabled={!canSave}
-          >
-            <ArrowDownToLine size={15} />
-            <span>Save image</span>
-          </button>
+          {workspaceMode === "studio" && (
+            <button
+              type="button"
+              className="studio-button primary"
+              onClick={saveImage}
+              disabled={!canSave}
+            >
+              <ArrowDownToLine size={15} />
+              <span>Save image</span>
+            </button>
+          )}
         </div>
       </header>
 
@@ -579,758 +587,833 @@ function LumaLab() {
           </div>
           <span className="workspace-hint">Load. Adjust. Compare.</span>
         </div>
-        <nav className="category-navigation" aria-label="Enhancement category">
-          <div className="category-choices">
-            {categories.map((item, index) => (
-              <button
-                type="button"
-                key={item.id}
-                className="category-choice"
-                aria-label={item.name}
-                aria-pressed={category === item.id}
-                disabled={sequenceRunning}
-                onClick={() => {
-                  if (item.id !== category)
-                    chooseMethod(item.id === "intensity" ? "gamma" : "gaussian");
-                }}
-              >
-                <span className="category-number">0{index + 1}</span>
-                {item.name}
-              </button>
-            ))}
-          </div>
-          <p>{categories.find((item) => item.id === category)!.description}</p>
-        </nav>
-        {(errorMessage || health.status === "offline") && (
-          <div className="studio-alert" role="alert">
-            <span>{errorMessage || health.detail}</span>
-            <div className="alert-actions">
-              {health.status === "ready" && (
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={() => setRetry((value) => value + 1)}
-                  disabled={isProcessing || !!parameterError}
-                >
-                  Retry processing
-                </button>
-              )}
-              {errorMessage && (
-                <button
-                  type="button"
-                  className="icon-button"
-                  onClick={() => setErrorMessage("")}
-                  aria-label="Dismiss message"
-                >
-                  <X size={15} />
-                </button>
-              )}
-            </div>
+        <div className="workspace-modes segmented" role="group" aria-label="Workspace mode">
+          <button
+            aria-pressed={workspaceMode === "studio"}
+            onClick={() => setWorkspaceMode("studio")}
+            disabled={sequenceRunning}
+          >
+            Enhancement Studio
+          </button>
+          <button
+            aria-pressed={workspaceMode === "noise"}
+            onClick={() => {
+              setNoiseOpened(true);
+              setWorkspaceMode("noise");
+            }}
+            disabled={sequenceRunning}
+          >
+            Noise Playground
+          </button>
+        </div>
+        {noiseOpened && (
+          <div hidden={workspaceMode !== "noise"}>
+            <NoisePlayground
+              key={imageId ?? "empty"}
+              clean={source}
+              fileName={fileName}
+              health={health}
+              onUpload={() => fileInputRef.current?.click()}
+            />
           </div>
         )}
-
-        <div className="studio-grid">
-          <section className="inspect-column" aria-label="Image comparison and analysis">
-            <div className="preview-card">
-              <div className="preview-toolbar">
-                <div className="preview-file">
-                  <FileImage size={15} />
-                  <span title={fileName}>{fileName || "No image selected"}</span>
-                  {isDemo && imageUrl && <span className="small-tag">SAMPLE</span>}
-                </div>
-                <div
-                  className="segmented layout-switch"
-                  role="group"
-                  aria-label="Comparison layout"
-                >
-                  <button
-                    type="button"
-                    aria-pressed={viewMode === "split"}
-                    onClick={() => setViewMode("split")}
-                    disabled={!imageUrl}
-                  >
-                    <ArrowLeftRight size={13} />
-                    Split
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={viewMode === "side-by-side"}
-                    onClick={() => setViewMode("side-by-side")}
-                    disabled={!imageUrl}
-                  >
-                    Side by side
-                  </button>
-                </div>
-              </div>
-              <div
-                className="comparison-stage checkerboard"
-                ref={stageRef}
-                onPointerMove={moveDivider}
-                onPointerUp={() => setIsDragging(false)}
-                onPointerCancel={() => setIsDragging(false)}
-              >
-                {imageUrl ? (
-                  viewMode === "split" ? (
-                    <>
-                      {imageCompare(true)}
-                      <div
-                        className="original-mask"
-                        style={{ clipPath: `inset(0 ${100 - split}% 0 0)` }}
-                      >
-                        {imageCompare(false)}
-                      </div>
-                      <span className="image-label original-label">ORIGINAL</span>
-                      <span className="image-label enhanced-label">{enhancedLabel}</span>
-                      <div className="divider-line" style={{ left: `${split}%` }} />
-                      <button
-                        type="button"
-                        className="divider-handle"
-                        style={{ left: `${split}%` }}
-                        role="slider"
-                        aria-label="Image comparison divider"
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={Math.round(split)}
-                        aria-orientation="horizontal"
-                        onPointerDown={(event) => {
-                          event.currentTarget.setPointerCapture(event.pointerId);
-                          setIsDragging(true);
-                        }}
-                        onKeyDown={(event) => {
-                          if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
-                            event.preventDefault();
-                            setSplit((value) =>
-                              event.key === "Home"
-                                ? 0
-                                : event.key === "End"
-                                  ? 100
-                                  : Math.min(
-                                      100,
-                                      Math.max(
-                                        0,
-                                        value +
-                                          (event.key === "ArrowLeft" ? -1 : 1) *
-                                            (event.shiftKey ? 10 : 1),
-                                      ),
-                                    ),
-                            );
-                          }
-                        }}
-                      >
-                        <ArrowLeftRight size={16} />
-                      </button>
-                    </>
-                  ) : (
-                    <div className="side-by-side">
-                      {[false, true].map((enhanced) => (
-                        <div className="side-image" key={String(enhanced)}>
-                          {imageCompare(enhanced)}
-                          <span className="image-label original-label">
-                            {enhanced ? enhancedLabel : "ORIGINAL"}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )
-                ) : (
-                  <div className="empty-stage">
-                    <FileImage size={32} strokeWidth={1.2} />
-                    <h2>Your next experiment starts here.</h2>
-                    <p>Bring in an image to explore light, contrast, and tone.</p>
-                    <button
-                      type="button"
-                      className="studio-button primary"
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      <Upload size={15} />
-                      Choose image
-                    </button>
-                    <small>PNG or JPEG · up to 10 MB</small>
-                  </div>
-                )}
-                {isProcessing && (
-                  <span className="processing-pill" role="status">
-                    <span className="status-dot pulse" />
-                    Processing in MATLAB…
-                  </span>
-                )}
-              </div>
-              <div className="comparison-controls">
-                <div className="comparison-position">
-                  <span>Before</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={split}
-                    onChange={(event) => setSplit(Number(event.target.value))}
-                    disabled={!imageUrl || viewMode !== "split"}
-                    aria-label="Comparison position"
-                  />
-                  <span>After</span>
-                </div>
-                <div className="zoom-controls">
-                  <button
-                    type="button"
-                    className="icon-button"
-                    onClick={() => setZoom((value) => Math.max(50, value - 10))}
-                    disabled={!imageUrl}
-                    aria-label="Zoom out"
-                  >
-                    <Minus size={14} />
-                  </button>
-                  <span>{zoom}%</span>
-                  <button
-                    type="button"
-                    className="icon-button"
-                    onClick={() => setZoom((value) => Math.min(200, value + 10))}
-                    disabled={!imageUrl}
-                    aria-label="Zoom in"
-                  >
-                    <Plus size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-button fit-button"
-                    onClick={() => setZoom(100)}
-                    disabled={!imageUrl}
-                    aria-label="Fit image to view"
-                    title="Fit to view"
-                  >
-                    <Maximize2 size={14} />
-                  </button>
-                </div>
-              </div>
-              <div className="preview-caption">
-                <span className={hasCurrentResult ? "result-success" : ""}>
-                  {hasCurrentResult ? <Check size={13} /> : <span className="status-dot" />}
-                  {previewStatus}
-                </span>
-                <span>{resultParameters}</span>
-              </div>
-            </div>
-
-            <div className="analysis-grid">
-              <section className="analysis-card">
-                <div className="card-heading">
-                  <h2>Tone distribution</h2>
-                  <span className="eyebrow">LUMINANCE</span>
-                </div>
-                <p className="card-description">See where the light and dark pixels fall.</p>
-                <Histogram
-                  original={result?.histograms.original ?? []}
-                  enhanced={result?.histograms.enhanced ?? []}
-                />
-                <div className="chart-legend">
-                  <span>
-                    <i className="original-swatch" />
-                    Original
-                  </span>
-                  <span>
-                    <i className="enhanced-swatch" />
-                    {result?.method === "sequence"
-                      ? result.outputKind === "edge-map"
-                        ? "Sequence edge map"
-                        : "Sequence result"
-                      : result?.outputKind === "edge-map"
-                        ? "Edge map"
-                        : "Enhanced"}
-                  </span>
-                  <small>Brightness · 0–255</small>
-                </div>
-              </section>
-              <section className="analysis-card">
-                <div className="card-heading">
-                  <h2>Image statistics</h2>
-                  <span className="small-tag">
-                    {result?.outputKind === "edge-map"
-                      ? "EDGE MAP"
-                      : result?.enhanced.channels === 1
-                        ? "GRAYSCALE"
-                        : result
-                          ? "RGB"
-                          : "—"}
-                  </span>
-                </div>
-                <p className="card-description">Measured from the actual image pixels.</p>
-                <table className="statistics-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Measure</th>
-                      <th scope="col">Original</th>
-                      <th scope="col">
-                        {result?.method === "sequence"
-                          ? result.outputKind === "edge-map"
-                            ? "Sequence edge map"
-                            : "Sequence result"
-                          : result?.outputKind === "edge-map"
-                            ? "Edge map"
-                            : "Enhanced"}
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <th scope="row">Mean brightness</th>
-                      <td>{result?.original.mean.toFixed(1) ?? "—"}</td>
-                      <td>{result?.enhanced.mean.toFixed(1) ?? "—"}</td>
-                    </tr>
-                    <tr>
-                      <th scope="row">
-                        Contrast <span title="Population standard deviation of luminance">(σ)</span>
-                      </th>
-                      <td>{result?.original.deviation.toFixed(1) ?? "—"}</td>
-                      <td>{result?.enhanced.deviation.toFixed(1) ?? "—"}</td>
-                    </tr>
-                  </tbody>
-                </table>
-                <p className="statistics-note">All pixels · luminance on a 0–255 scale</p>
-              </section>
-            </div>
-          </section>
-
-          <aside className="adjustments-panel" aria-label="Image adjustments">
-            <div className="panel-heading">
-              <h2>Adjustments</h2>
-              <span className="eyebrow">01 — 03</span>
-            </div>
-            <section className="load-section">
-              <h3 className="step-heading">
-                <span>01</span>Load your image
-              </h3>
-              <button
-                type="button"
-                className="upload-zone"
-                disabled={sequenceRunning}
-                data-dragging={isDropActive}
-                onClick={() => fileInputRef.current?.click()}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  setIsDropActive(true);
-                }}
-                onDragLeave={() => setIsDropActive(false)}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  setIsDropActive(false);
-                  openFile(event.dataTransfer.files[0]);
-                }}
-              >
-                <Upload size={18} strokeWidth={1.5} />
-                <span>
-                  Drop an image or <b>browse</b>
-                </span>
-                <small>PNG / JPEG · up to 10 MB</small>
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/png,image/jpeg,.jpg,.jpeg"
-                className="sr-only"
-                aria-label="Upload image file"
-                disabled={sequenceRunning}
-                onChange={(event) => {
-                  openFile(event.target.files?.[0]);
-                  event.currentTarget.value = "";
-                }}
-              />
-              {imageUrl && (
-                <div className="loaded-image">
-                  <img src={source?.originalUrl ?? imageUrl} alt="Selected image thumbnail" />
-                  <div>
-                    <span title={fileName}>{fileName}</span>
-                    <small>
-                      {source
-                        ? `${source.original.width} × ${source.original.height} px · ${source.original.channels} channel${source.original.channels === 1 ? "" : "s"}`
-                        : "Preparing image…"}
-                    </small>
-                  </div>
-                  <button
-                    type="button"
-                    className="icon-button"
-                    onClick={removeImage}
-                    aria-label="Remove image"
-                    title="Remove image"
-                    disabled={sequenceRunning}
-                  >
-                    <X size={13} />
-                  </button>
-                </div>
-              )}
-            </section>
-
-            <section className="method-section">
-              <h3 className="step-heading">
-                <span>02</span>Choose a method
-              </h3>
-              <div
-                className={`segmented method-switch ${category === "spatial" ? "spatial-methods" : ""}`}
-                role="group"
-                aria-label="Enhancement method"
-              >
-                {methods
-                  .filter((item) => item.category === category)
-                  .map((item) => (
-                    <button
-                      type="button"
-                      key={item.id}
-                      aria-label={item.name}
-                      aria-pressed={method === item.id}
-                      disabled={!imageUrl || sequenceRunning}
-                      onClick={() => chooseMethod(item.id)}
-                    >
-                      {item.short}
-                    </button>
-                  ))}
-              </div>
-            </section>
-
-            <section className="parameter-section">
-              <h3 className="step-heading">
-                <span>03</span>Find your balance
-              </h3>
-              <div className="method-copy" key={method}>
-                <h4>{selectedMethod}</h4>
-                <p>{explanation}</p>
-              </div>
-              {method === "gamma" && (
-                <div className="method-controls">
-                  <div className="control-label">
-                    <label htmlFor="gamma-number">Gamma value</label>
-                    <div className="number-field">
-                      <span>γ</span>
-                      <input
-                        id="gamma-number"
-                        aria-label="Gamma numeric value"
-                        type="number"
-                        min="0.2"
-                        max="3"
-                        step="0.05"
-                        value={gammaValue}
-                        onChange={(event) => setGammaValue(event.target.value)}
-                        disabled={!canAdjust}
-                        aria-invalid={!!parameterError}
-                      />
-                    </div>
-                  </div>
-                  <input
-                    type="range"
-                    min="0.2"
-                    max="3"
-                    step="any"
-                    value={Number.isFinite(gamma) ? gamma : 1}
-                    onChange={(event) =>
-                      setGammaValue(String(Math.round(Number(event.target.value) * 100) / 100))
+        <div hidden={workspaceMode !== "studio"}>
+          <LearningAssistant
+            context={{
+              mode: "studio",
+              status: !imageId
+                ? "empty"
+                : isProcessing
+                  ? "processing"
+                  : errorMessage || (previewMode === "sequence" && sequenceError)
+                    ? "error"
+                    : hasCurrentResult
+                      ? "ready"
+                      : "stale",
+              selected: parameterError ? null : options,
+              sequence: sequenceSteps.map(({ category, method, parameters }) => ({
+                category,
+                method,
+                parameters,
+              })),
+              resultSequence:
+                result?.steps?.map(({ category, method, parameters }) => ({
+                  category,
+                  method,
+                  parameters,
+                })) ?? [],
+              resultOperation:
+                result && result.method !== "sequence" && result.method !== "noise"
+                  ? {
+                      category: result.category as "intensity" | "spatial",
+                      method: result.method,
+                      parameters: result.parameters,
                     }
-                    disabled={!canAdjust}
-                    aria-label="Gamma value"
-                    className="parameter-slider"
-                  />
-                  <div className="range-labels">
-                    <span>0.2 · Brighter</span>
-                    <span>3.0 · Darker</span>
-                  </div>
-                  <div className="preset-row">
-                    {gammaPresets.map((preset) => (
-                      <button
-                        type="button"
-                        className="preset-button"
-                        key={preset.label}
-                        aria-pressed={gamma === Number(preset.value)}
-                        disabled={!canAdjust}
-                        onClick={() => setGammaValue(preset.value)}
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {method === "equalize" && (
-                <div className="automatic-note">
-                  <Check size={16} />
-                  <div>
-                    <strong>No settings needed.</strong>
-                    <p>MATLAB finds the mapping from your image’s histogram.</p>
-                  </div>
-                </div>
-              )}
-              {method === "stretch" && (
-                <div className="method-controls">
-                  <div className="cutoff-row">
-                    <div className="control-label">
-                      <label htmlFor="low-cutoff">Low cutoff</label>
-                      <div className="number-field">
-                        <input
-                          id="low-cutoff"
-                          type="number"
-                          min="0"
-                          max="100"
-                          step="1"
-                          value={lowValue}
-                          onChange={(event) => setLowValue(event.target.value)}
-                          disabled={!canAdjust}
-                          aria-invalid={!!parameterError}
-                          aria-describedby={parameterError ? "parameter-error" : "cutoff-help"}
-                        />
-                        <span>%</span>
-                      </div>
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      step="any"
-                      value={Number.isFinite(low) ? low : 10}
-                      onChange={(event) =>
-                        setLowValue(
-                          String(
-                            Math.min(
-                              Math.round(Number(event.target.value) * 100) / 100,
-                              Number.isFinite(high) && high > 0 ? Math.max(0, high - 0.01) : 100,
-                            ),
-                          ),
-                        )
-                      }
-                      disabled={!canAdjust}
-                      aria-label="Low cutoff slider"
-                      className="parameter-slider"
-                    />
-                  </div>
-                  <div className="cutoff-row">
-                    <div className="control-label">
-                      <label htmlFor="high-cutoff">High cutoff</label>
-                      <div className="number-field">
-                        <input
-                          id="high-cutoff"
-                          type="number"
-                          min="0"
-                          max="100"
-                          step="1"
-                          value={highValue}
-                          onChange={(event) => setHighValue(event.target.value)}
-                          disabled={!canAdjust}
-                          aria-invalid={!!parameterError}
-                          aria-describedby={parameterError ? "parameter-error" : "cutoff-help"}
-                        />
-                        <span>%</span>
-                      </div>
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      step="any"
-                      value={Number.isFinite(high) ? high : 90}
-                      onChange={(event) =>
-                        setHighValue(
-                          String(
-                            Math.max(
-                              Math.round(Number(event.target.value) * 100) / 100,
-                              Number.isFinite(low) && low < 100 ? Math.min(100, low + 0.01) : 0,
-                            ),
-                          ),
-                        )
-                      }
-                      disabled={!canAdjust}
-                      aria-label="High cutoff slider"
-                      className="parameter-slider"
-                    />
-                  </div>
-                  <div className="selected-range">
-                    <span>Input brightness</span>
-                    <strong>{parameterError ? "Invalid range" : `${low}% → ${high}%`}</strong>
-                  </div>
-                  <div className="tone-range" aria-hidden="true">
-                    {!parameterError && (
-                      <span style={{ left: `${low}%`, width: `${high - low}%` }} />
-                    )}
-                  </div>
-                  <p id="cutoff-help" className="cutoff-help">
-                    Your selected range expands to 0–100% output brightness.
-                  </p>
-                  <div className="preset-row">
-                    {stretchPresets.map((preset) => (
-                      <button
-                        type="button"
-                        className="preset-button"
-                        key={preset.label}
-                        aria-pressed={low === Number(preset.low) && high === Number(preset.high)}
-                        disabled={!canAdjust}
-                        onClick={() => {
-                          setLowValue(preset.low);
-                          setHighValue(preset.high);
-                        }}
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    className="text-button defaults-button"
-                    disabled={!canAdjust}
-                    onClick={() => {
-                      setLowValue("10");
-                      setHighValue("90");
-                    }}
-                  >
-                    Reset cutoffs
-                  </button>
-                </div>
-              )}
-              {category === "spatial" && (
-                <FilterControls
-                  method={method}
-                  kernelSize={kernelSize}
-                  sigmaValue={sigmaValue}
-                  amountValue={amountValue}
-                  disabled={!imageUrl || sequenceRunning}
-                  setKernelSize={setKernelSize}
-                  setSigmaValue={setSigmaValue}
-                  setAmountValue={setAmountValue}
-                />
-              )}
-              {parameterError && (
-                <p className="parameter-error" id="parameter-error" role="alert">
-                  {parameterError}
-                </p>
-              )}
-              {category === "spatial" && (
-                <FilterSimulation
-                  method={method}
-                  imageUrl={imageUrl}
-                  kernelSize={kernelSize}
-                  sigma={method === "gaussian" || method === "unsharp" ? sigma : 1}
-                  amount={method === "unsharp" ? amount : 1}
-                  onLoadImage={() => fileInputRef.current?.click()}
-                />
-              )}
-              <p className="auto-preview-note">
-                <span className="status-dot" />
-                {sequenceRunning
-                  ? "Running your saved sequence…"
-                  : hasCurrentSequence
-                    ? "Viewing the final sequence result."
-                    : !imageFile
-                      ? "Load an image to begin."
-                      : !canAdjust
-                        ? health.status === "ready"
-                          ? "Reading your image in MATLAB…"
-                          : "Waiting for the MATLAB connection."
-                        : isProcessing
-                          ? "Updating your preview…"
-                          : "Changes preview automatically."}
-              </p>
-              {previewMode === "sequence" && (
+                  : null,
+              noise: null,
+              measurements: result
+                ? {
+                    original: measuredContext(result.original, result.histograms.original),
+                    result: measuredContext(result.enhanced, result.histograms.enhanced),
+                  }
+                : {},
+            }}
+          />
+          <nav className="category-navigation" aria-label="Enhancement category">
+            <div className="category-choices">
+              {categories.map((item, index) => (
                 <button
                   type="button"
-                  className="text-button sequence-preview-switch"
+                  key={item.id}
+                  className="category-choice"
+                  aria-label={item.name}
+                  aria-pressed={category === item.id}
                   disabled={sequenceRunning}
-                  onClick={() => setPreviewMode("single")}
+                  onClick={() => {
+                    if (item.id !== category)
+                      chooseMethod(item.id === "intensity" ? "gamma" : "gaussian");
+                  }}
                 >
-                  Preview selected operation
+                  <span className="category-number">0{index + 1}</span>
+                  {item.name}
                 </button>
-              )}
-            </section>
-
-            <ProcessingSequence
-              steps={sequenceSteps}
-              phase={sequencePhase}
-              progress={sequenceProgress}
-              error={sequenceError}
-              canAdd={!!imageUrl && !parameterError}
-              canRun={canAdjust && !isProcessing}
-              isCurrentResult={hasCurrentSequence}
-              runHint={
-                !imageUrl
-                  ? "Load an image before running these steps."
-                  : health.status !== "ready"
-                    ? "Start MATLAB to run the saved sequence."
-                    : isProcessing
-                      ? "Wait for the current preview to finish, then run the sequence."
-                      : "Run these saved steps to view their final result."
-              }
-              onAdd={addSequenceStep}
-              onRun={() => void startSequence()}
-              onMove={moveSequenceStep}
-              onRemove={(id) => updateSequence(sequenceSteps.filter((step) => step.id !== id))}
-              onClear={() => {
-                updateSequence([]);
-                resetImage();
-              }}
-            />
-
-            <details className="learning-notes">
-              <summary>
-                Understand this method
-                <ChevronDown size={14} />
-              </summary>
-              <div>
-                {category === "spatial" ? (
-                  <>
-                    {method !== "sobel" && <NeighborhoodDiagram size={kernelSize} />}
-                    <p>
-                      {method === "mean"
-                        ? "Each pixel becomes the average of its neighborhood."
-                        : method === "gaussian"
-                          ? "Gaussian weights give the center more influence. Larger sigma spreads that influence."
-                          : method === "median"
-                            ? "The median is the middle value after sorting the neighborhood’s intensities."
-                            : method === "unsharp"
-                              ? "Detail = original − Gaussian blur. Result = original + strength × detail."
-                              : "Sobel estimates horizontal and vertical intensity changes. The output is a grayscale edge-strength map on a fixed 0–1 scale."}
-                    </p>
-                    <p>
-                      {method === "sobel"
-                        ? "RGB input is converted to luminance before detecting edges."
-                        : "RGB filters change BT.601 luminance and retain chrominance before clipping. Color noise can remain because chrominance is not smoothed."}
-                    </p>
-                  </>
-                ) : method === "gamma" ? (
-                  <>
-                    <p className="formula">
-                      s = r<sup>γ</sup>
-                    </p>
-                    <p>Intensity r is normalized to 0–1. Gamma 1 leaves the image unchanged.</p>
-                  </>
-                ) : method === "equalize" ? (
-                  <>
-                    <p>
-                      Each brightness level maps through the cumulative histogram. This spreads
-                      crowded tones over more of the output range.
-                    </p>
-                    <p>RGB processing changes luminance, keeping chrominance before clipping.</p>
-                  </>
-                ) : (
-                  <>
-                    <p className="formula">s = (r − low) / (high − low)</p>
-                    <p>
-                      Below the low cutoff becomes black. Above the high cutoff becomes white.
-                      Values in between spread across the full range.
-                    </p>
-                    <p>
-                      Cutoffs are brightness percentages, not percentiles. RGB stretches luminance;
-                      color is preserved before gamut clipping. Flat images stay unchanged.
-                    </p>
-                  </>
+              ))}
+            </div>
+            <p>{categories.find((item) => item.id === category)!.description}</p>
+          </nav>
+          {(errorMessage || health.status === "offline") && (
+            <div className="studio-alert" role="alert">
+              <span>{errorMessage || health.detail}</span>
+              <div className="alert-actions">
+                {health.status === "ready" && (
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => setRetry((value) => value + 1)}
+                    disabled={isProcessing || !!parameterError}
+                  >
+                    Retry processing
+                  </button>
+                )}
+                {errorMessage && (
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={() => setErrorMessage("")}
+                    aria-label="Dismiss message"
+                  >
+                    <X size={15} />
+                  </button>
                 )}
               </div>
-            </details>
-            <div className="panel-footer">
-              <button
-                type="button"
-                className="studio-button secondary reset-button"
-                onClick={resetImage}
-                disabled={!imageUrl || sequenceRunning}
-              >
-                <RotateCcw size={14} />
-                Reset
-              </button>
-              <span>
-                {sequenceSteps.length ? "Reset keeps saved steps." : "Original stays untouched."}
-              </span>
             </div>
-          </aside>
+          )}
+
+          <div className="studio-grid">
+            <section className="inspect-column" aria-label="Image comparison and analysis">
+              <div className="preview-card">
+                <div className="preview-toolbar">
+                  <div className="preview-file">
+                    <FileImage size={15} />
+                    <span title={fileName}>{fileName || "No image selected"}</span>
+                    {isDemo && imageUrl && <span className="small-tag">SAMPLE</span>}
+                  </div>
+                  <div
+                    className="segmented layout-switch"
+                    role="group"
+                    aria-label="Comparison layout"
+                  >
+                    <button
+                      type="button"
+                      aria-pressed={viewMode === "split"}
+                      onClick={() => setViewMode("split")}
+                      disabled={!imageUrl}
+                    >
+                      <ArrowLeftRight size={13} />
+                      Split
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={viewMode === "side-by-side"}
+                      onClick={() => setViewMode("side-by-side")}
+                      disabled={!imageUrl}
+                    >
+                      Side by side
+                    </button>
+                  </div>
+                </div>
+                <div
+                  className="comparison-stage checkerboard"
+                  ref={stageRef}
+                  onPointerMove={moveDivider}
+                  onPointerUp={() => setIsDragging(false)}
+                  onPointerCancel={() => setIsDragging(false)}
+                >
+                  {imageUrl ? (
+                    viewMode === "split" ? (
+                      <>
+                        {imageCompare(true)}
+                        <div
+                          className="original-mask"
+                          style={{ clipPath: `inset(0 ${100 - split}% 0 0)` }}
+                        >
+                          {imageCompare(false)}
+                        </div>
+                        <span className="image-label original-label">ORIGINAL</span>
+                        <span className="image-label enhanced-label">{enhancedLabel}</span>
+                        <div className="divider-line" style={{ left: `${split}%` }} />
+                        <button
+                          type="button"
+                          className="divider-handle"
+                          style={{ left: `${split}%` }}
+                          role="slider"
+                          aria-label="Image comparison divider"
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={Math.round(split)}
+                          aria-orientation="horizontal"
+                          onPointerDown={(event) => {
+                            event.currentTarget.setPointerCapture(event.pointerId);
+                            setIsDragging(true);
+                          }}
+                          onKeyDown={(event) => {
+                            if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+                              event.preventDefault();
+                              setSplit((value) =>
+                                event.key === "Home"
+                                  ? 0
+                                  : event.key === "End"
+                                    ? 100
+                                    : Math.min(
+                                        100,
+                                        Math.max(
+                                          0,
+                                          value +
+                                            (event.key === "ArrowLeft" ? -1 : 1) *
+                                              (event.shiftKey ? 10 : 1),
+                                        ),
+                                      ),
+                              );
+                            }
+                          }}
+                        >
+                          <ArrowLeftRight size={16} />
+                        </button>
+                      </>
+                    ) : (
+                      <div className="side-by-side">
+                        {[false, true].map((enhanced) => (
+                          <div className="side-image" key={String(enhanced)}>
+                            {imageCompare(enhanced)}
+                            <span className="image-label original-label">
+                              {enhanced ? enhancedLabel : "ORIGINAL"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  ) : (
+                    <div className="empty-stage">
+                      <FileImage size={32} strokeWidth={1.2} />
+                      <h2>Your next experiment starts here.</h2>
+                      <p>Bring in an image to explore light, contrast, and tone.</p>
+                      <button
+                        type="button"
+                        className="studio-button primary"
+                        onClick={() => fileInputRef.current?.click()}
+                      >
+                        <Upload size={15} />
+                        Choose image
+                      </button>
+                      <small>PNG or JPEG · up to 10 MB</small>
+                    </div>
+                  )}
+                  {isProcessing && (
+                    <span className="processing-pill" role="status">
+                      <span className="status-dot pulse" />
+                      Processing in MATLAB…
+                    </span>
+                  )}
+                </div>
+                <div className="comparison-controls">
+                  <div className="comparison-position">
+                    <span>Before</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={split}
+                      onChange={(event) => setSplit(Number(event.target.value))}
+                      disabled={!imageUrl || viewMode !== "split"}
+                      aria-label="Comparison position"
+                    />
+                    <span>After</span>
+                  </div>
+                  <div className="zoom-controls">
+                    <button
+                      type="button"
+                      className="icon-button"
+                      onClick={() => setZoom((value) => Math.max(50, value - 10))}
+                      disabled={!imageUrl}
+                      aria-label="Zoom out"
+                    >
+                      <Minus size={14} />
+                    </button>
+                    <span>{zoom}%</span>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      onClick={() => setZoom((value) => Math.min(200, value + 10))}
+                      disabled={!imageUrl}
+                      aria-label="Zoom in"
+                    >
+                      <Plus size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button fit-button"
+                      onClick={() => setZoom(100)}
+                      disabled={!imageUrl}
+                      aria-label="Fit image to view"
+                      title="Fit to view"
+                    >
+                      <Maximize2 size={14} />
+                    </button>
+                  </div>
+                </div>
+                <div className="preview-caption">
+                  <span className={hasCurrentResult ? "result-success" : ""}>
+                    {hasCurrentResult ? <Check size={13} /> : <span className="status-dot" />}
+                    {previewStatus}
+                  </span>
+                  <span>{resultParameters}</span>
+                </div>
+              </div>
+
+              <div className="analysis-grid">
+                <section className="analysis-card">
+                  <div className="card-heading">
+                    <h2>Tone distribution</h2>
+                    <span className="eyebrow">LUMINANCE</span>
+                  </div>
+                  <p className="card-description">See where the light and dark pixels fall.</p>
+                  <Histogram
+                    original={result?.histograms.original ?? []}
+                    enhanced={result?.histograms.enhanced ?? []}
+                  />
+                  <div className="chart-legend">
+                    <span>
+                      <i className="original-swatch" />
+                      Original
+                    </span>
+                    <span>
+                      <i className="enhanced-swatch" />
+                      {result?.method === "sequence"
+                        ? result.outputKind === "edge-map"
+                          ? "Sequence edge map"
+                          : "Sequence result"
+                        : result?.outputKind === "edge-map"
+                          ? "Edge map"
+                          : "Enhanced"}
+                    </span>
+                    <small>Brightness · 0–255</small>
+                  </div>
+                </section>
+                <section className="analysis-card">
+                  <div className="card-heading">
+                    <h2>Image statistics</h2>
+                    <span className="small-tag">
+                      {result?.outputKind === "edge-map"
+                        ? "EDGE MAP"
+                        : result?.enhanced.channels === 1
+                          ? "GRAYSCALE"
+                          : result
+                            ? "RGB"
+                            : "—"}
+                    </span>
+                  </div>
+                  <p className="card-description">Measured from the actual image pixels.</p>
+                  <table className="statistics-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Measure</th>
+                        <th scope="col">Original</th>
+                        <th scope="col">
+                          {result?.method === "sequence"
+                            ? result.outputKind === "edge-map"
+                              ? "Sequence edge map"
+                              : "Sequence result"
+                            : result?.outputKind === "edge-map"
+                              ? "Edge map"
+                              : "Enhanced"}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <th scope="row">Mean brightness</th>
+                        <td>{result?.original.mean.toFixed(1) ?? "—"}</td>
+                        <td>{result?.enhanced.mean.toFixed(1) ?? "—"}</td>
+                      </tr>
+                      <tr>
+                        <th scope="row">
+                          Contrast{" "}
+                          <span title="Population standard deviation of luminance">(σ)</span>
+                        </th>
+                        <td>{result?.original.deviation.toFixed(1) ?? "—"}</td>
+                        <td>{result?.enhanced.deviation.toFixed(1) ?? "—"}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <p className="statistics-note">All pixels · luminance on a 0–255 scale</p>
+                </section>
+              </div>
+            </section>
+
+            <aside className="adjustments-panel" aria-label="Image adjustments">
+              <div className="panel-heading">
+                <h2>Adjustments</h2>
+                <span className="eyebrow">01 — 03</span>
+              </div>
+              <section className="load-section">
+                <h3 className="step-heading">
+                  <span>01</span>Load your image
+                </h3>
+                <button
+                  type="button"
+                  className="upload-zone"
+                  disabled={sequenceRunning}
+                  data-dragging={isDropActive}
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    setIsDropActive(true);
+                  }}
+                  onDragLeave={() => setIsDropActive(false)}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    setIsDropActive(false);
+                    openFile(event.dataTransfer.files[0]);
+                  }}
+                >
+                  <Upload size={18} strokeWidth={1.5} />
+                  <span>
+                    Drop an image or <b>browse</b>
+                  </span>
+                  <small>PNG / JPEG · up to 10 MB</small>
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,.jpg,.jpeg"
+                  className="sr-only"
+                  aria-label="Upload image file"
+                  disabled={sequenceRunning}
+                  onChange={(event) => {
+                    openFile(event.target.files?.[0]);
+                    event.currentTarget.value = "";
+                  }}
+                />
+                {imageUrl && (
+                  <div className="loaded-image">
+                    <img src={source?.originalUrl ?? imageUrl} alt="Selected image thumbnail" />
+                    <div>
+                      <span title={fileName}>{fileName}</span>
+                      <small>
+                        {source
+                          ? `${source.original.width} × ${source.original.height} px · ${source.original.channels} channel${source.original.channels === 1 ? "" : "s"}`
+                          : "Preparing image…"}
+                      </small>
+                    </div>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      onClick={removeImage}
+                      aria-label="Remove image"
+                      title="Remove image"
+                      disabled={sequenceRunning}
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                )}
+              </section>
+
+              <section className="method-section">
+                <h3 className="step-heading">
+                  <span>02</span>Choose a method
+                </h3>
+                <div
+                  className={`segmented method-switch ${category === "spatial" ? "spatial-methods" : ""}`}
+                  role="group"
+                  aria-label="Enhancement method"
+                >
+                  {methods
+                    .filter((item) => item.category === category)
+                    .map((item) => (
+                      <button
+                        type="button"
+                        key={item.id}
+                        aria-label={item.name}
+                        aria-pressed={method === item.id}
+                        disabled={!imageUrl || sequenceRunning}
+                        onClick={() => chooseMethod(item.id)}
+                      >
+                        {item.short}
+                      </button>
+                    ))}
+                </div>
+              </section>
+
+              <section className="parameter-section">
+                <h3 className="step-heading">
+                  <span>03</span>Find your balance
+                </h3>
+                <div className="method-copy" key={method}>
+                  <h4>{selectedMethod}</h4>
+                  <p>{explanation}</p>
+                </div>
+                {method === "gamma" && (
+                  <div className="method-controls">
+                    <div className="control-label">
+                      <label htmlFor="gamma-number">Gamma value</label>
+                      <div className="number-field">
+                        <span>γ</span>
+                        <input
+                          id="gamma-number"
+                          aria-label="Gamma numeric value"
+                          type="number"
+                          min="0.2"
+                          max="3"
+                          step="0.05"
+                          value={gammaValue}
+                          onChange={(event) => setGammaValue(event.target.value)}
+                          disabled={!canAdjust}
+                          aria-invalid={!!parameterError}
+                        />
+                      </div>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.2"
+                      max="3"
+                      step="any"
+                      value={Number.isFinite(gamma) ? gamma : 1}
+                      onChange={(event) =>
+                        setGammaValue(String(Math.round(Number(event.target.value) * 100) / 100))
+                      }
+                      disabled={!canAdjust}
+                      aria-label="Gamma value"
+                      className="parameter-slider"
+                    />
+                    <div className="range-labels">
+                      <span>0.2 · Brighter</span>
+                      <span>3.0 · Darker</span>
+                    </div>
+                    <div className="preset-row">
+                      {gammaPresets.map((preset) => (
+                        <button
+                          type="button"
+                          className="preset-button"
+                          key={preset.label}
+                          aria-pressed={gamma === Number(preset.value)}
+                          disabled={!canAdjust}
+                          onClick={() => setGammaValue(preset.value)}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {method === "equalize" && (
+                  <div className="automatic-note">
+                    <Check size={16} />
+                    <div>
+                      <strong>No settings needed.</strong>
+                      <p>MATLAB finds the mapping from your image’s histogram.</p>
+                    </div>
+                  </div>
+                )}
+                {method === "stretch" && (
+                  <div className="method-controls">
+                    <div className="cutoff-row">
+                      <div className="control-label">
+                        <label htmlFor="low-cutoff">Low cutoff</label>
+                        <div className="number-field">
+                          <input
+                            id="low-cutoff"
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={lowValue}
+                            onChange={(event) => setLowValue(event.target.value)}
+                            disabled={!canAdjust}
+                            aria-invalid={!!parameterError}
+                            aria-describedby={parameterError ? "parameter-error" : "cutoff-help"}
+                          />
+                          <span>%</span>
+                        </div>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="any"
+                        value={Number.isFinite(low) ? low : 10}
+                        onChange={(event) =>
+                          setLowValue(
+                            String(
+                              Math.min(
+                                Math.round(Number(event.target.value) * 100) / 100,
+                                Number.isFinite(high) && high > 0 ? Math.max(0, high - 0.01) : 100,
+                              ),
+                            ),
+                          )
+                        }
+                        disabled={!canAdjust}
+                        aria-label="Low cutoff slider"
+                        className="parameter-slider"
+                      />
+                    </div>
+                    <div className="cutoff-row">
+                      <div className="control-label">
+                        <label htmlFor="high-cutoff">High cutoff</label>
+                        <div className="number-field">
+                          <input
+                            id="high-cutoff"
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={highValue}
+                            onChange={(event) => setHighValue(event.target.value)}
+                            disabled={!canAdjust}
+                            aria-invalid={!!parameterError}
+                            aria-describedby={parameterError ? "parameter-error" : "cutoff-help"}
+                          />
+                          <span>%</span>
+                        </div>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="any"
+                        value={Number.isFinite(high) ? high : 90}
+                        onChange={(event) =>
+                          setHighValue(
+                            String(
+                              Math.max(
+                                Math.round(Number(event.target.value) * 100) / 100,
+                                Number.isFinite(low) && low < 100 ? Math.min(100, low + 0.01) : 0,
+                              ),
+                            ),
+                          )
+                        }
+                        disabled={!canAdjust}
+                        aria-label="High cutoff slider"
+                        className="parameter-slider"
+                      />
+                    </div>
+                    <div className="selected-range">
+                      <span>Input brightness</span>
+                      <strong>{parameterError ? "Invalid range" : `${low}% → ${high}%`}</strong>
+                    </div>
+                    <div className="tone-range" aria-hidden="true">
+                      {!parameterError && (
+                        <span style={{ left: `${low}%`, width: `${high - low}%` }} />
+                      )}
+                    </div>
+                    <p id="cutoff-help" className="cutoff-help">
+                      Your selected range expands to 0–100% output brightness.
+                    </p>
+                    <div className="preset-row">
+                      {stretchPresets.map((preset) => (
+                        <button
+                          type="button"
+                          className="preset-button"
+                          key={preset.label}
+                          aria-pressed={low === Number(preset.low) && high === Number(preset.high)}
+                          disabled={!canAdjust}
+                          onClick={() => {
+                            setLowValue(preset.low);
+                            setHighValue(preset.high);
+                          }}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="text-button defaults-button"
+                      disabled={!canAdjust}
+                      onClick={() => {
+                        setLowValue("10");
+                        setHighValue("90");
+                      }}
+                    >
+                      Reset cutoffs
+                    </button>
+                  </div>
+                )}
+                {category === "spatial" && (
+                  <FilterControls
+                    method={method}
+                    kernelSize={kernelSize}
+                    sigmaValue={sigmaValue}
+                    amountValue={amountValue}
+                    disabled={!imageUrl || sequenceRunning}
+                    setKernelSize={setKernelSize}
+                    setSigmaValue={setSigmaValue}
+                    setAmountValue={setAmountValue}
+                  />
+                )}
+                {parameterError && (
+                  <p className="parameter-error" id="parameter-error" role="alert">
+                    {parameterError}
+                  </p>
+                )}
+                {category === "spatial" && (
+                  <FilterSimulation
+                    method={method}
+                    imageUrl={imageUrl}
+                    kernelSize={kernelSize}
+                    sigma={method === "gaussian" || method === "unsharp" ? sigma : 1}
+                    amount={method === "unsharp" ? amount : 1}
+                    onLoadImage={() => fileInputRef.current?.click()}
+                  />
+                )}
+                <p className="auto-preview-note">
+                  <span className="status-dot" />
+                  {sequenceRunning
+                    ? "Running your saved sequence…"
+                    : hasCurrentSequence
+                      ? "Viewing the final sequence result."
+                      : !imageFile
+                        ? "Load an image to begin."
+                        : !canAdjust
+                          ? health.status === "ready"
+                            ? "Reading your image in MATLAB…"
+                            : "Waiting for the MATLAB connection."
+                          : isProcessing
+                            ? "Updating your preview…"
+                            : "Changes preview automatically."}
+                </p>
+                {previewMode === "sequence" && (
+                  <button
+                    type="button"
+                    className="text-button sequence-preview-switch"
+                    disabled={sequenceRunning}
+                    onClick={() => setPreviewMode("single")}
+                  >
+                    Preview selected operation
+                  </button>
+                )}
+              </section>
+
+              <ProcessingSequence
+                steps={sequenceSteps}
+                phase={sequencePhase}
+                progress={sequenceProgress}
+                error={sequenceError}
+                canAdd={!!imageUrl && !parameterError}
+                canRun={canAdjust && !isProcessing}
+                isCurrentResult={hasCurrentSequence}
+                runHint={
+                  !imageUrl
+                    ? "Load an image before running these steps."
+                    : health.status !== "ready"
+                      ? "Start MATLAB to run the saved sequence."
+                      : isProcessing
+                        ? "Wait for the current preview to finish, then run the sequence."
+                        : "Run these saved steps to view their final result."
+                }
+                onAdd={addSequenceStep}
+                onRun={() => void startSequence()}
+                onMove={moveSequenceStep}
+                onRemove={(id) => updateSequence(sequenceSteps.filter((step) => step.id !== id))}
+                onClear={() => {
+                  updateSequence([]);
+                  resetImage();
+                }}
+              />
+
+              <details className="learning-notes">
+                <summary>
+                  Understand this method
+                  <ChevronDown size={14} />
+                </summary>
+                <div>
+                  {category === "spatial" ? (
+                    <>
+                      {method !== "sobel" && <NeighborhoodDiagram size={kernelSize} />}
+                      <p>
+                        {method === "mean"
+                          ? "Each pixel becomes the average of its neighborhood."
+                          : method === "gaussian"
+                            ? "Gaussian weights give the center more influence. Larger sigma spreads that influence."
+                            : method === "median"
+                              ? "The median is the middle value after sorting the neighborhood’s intensities."
+                              : method === "unsharp"
+                                ? "Detail = original − Gaussian blur. Result = original + strength × detail."
+                                : "Sobel estimates horizontal and vertical intensity changes. The output is a grayscale edge-strength map on a fixed 0–1 scale."}
+                      </p>
+                      <p>
+                        {method === "sobel"
+                          ? "RGB input is converted to luminance before detecting edges."
+                          : "RGB filters change BT.601 luminance and retain chrominance before clipping. Color noise can remain because chrominance is not smoothed."}
+                      </p>
+                    </>
+                  ) : method === "gamma" ? (
+                    <>
+                      <p className="formula">
+                        s = r<sup>γ</sup>
+                      </p>
+                      <p>Intensity r is normalized to 0–1. Gamma 1 leaves the image unchanged.</p>
+                    </>
+                  ) : method === "equalize" ? (
+                    <>
+                      <p>
+                        Each brightness level maps through the cumulative histogram. This spreads
+                        crowded tones over more of the output range.
+                      </p>
+                      <p>RGB processing changes luminance, keeping chrominance before clipping.</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="formula">s = (r − low) / (high − low)</p>
+                      <p>
+                        Below the low cutoff becomes black. Above the high cutoff becomes white.
+                        Values in between spread across the full range.
+                      </p>
+                      <p>
+                        Cutoffs are brightness percentages, not percentiles. RGB stretches
+                        luminance; color is preserved before gamut clipping. Flat images stay
+                        unchanged.
+                      </p>
+                    </>
+                  )}
+                </div>
+              </details>
+              <div className="panel-footer">
+                <button
+                  type="button"
+                  className="studio-button secondary reset-button"
+                  onClick={resetImage}
+                  disabled={!imageUrl || sequenceRunning}
+                >
+                  <RotateCcw size={14} />
+                  Reset
+                </button>
+                <span>
+                  {sequenceSteps.length ? "Reset keeps saved steps." : "Original stays untouched."}
+                </span>
+              </div>
+            </aside>
+          </div>
         </div>
         <footer className="studio-footer">
           <span>
@@ -1340,51 +1423,5 @@ function LumaLab() {
         </footer>
       </div>
     </main>
-  );
-}
-
-function Histogram({ original, enhanced }: { original: number[]; enhanced: number[] }) {
-  const peak = Math.max(...original, ...enhanced, 1);
-  const path = (bins: number[]) =>
-    bins
-      .map(
-        (value, index) =>
-          `${index === 0 ? "M" : "L"}${(index / 255) * 480},${98 - (value / peak) * 86}`,
-      )
-      .join(" ");
-  const enhancedPath = path(enhanced);
-  return (
-    <div className="histogram-chart">
-      <div className="histogram-scale">
-        <span>Pixel count</span>
-        <span>
-          {original.length
-            ? `Peak ${Math.max(...original, ...enhanced).toLocaleString("en-US")}`
-            : "—"}
-        </span>
-      </div>
-      <svg
-        viewBox="0 0 480 108"
-        role="img"
-        aria-label="Original and enhanced luminance histogram"
-        preserveAspectRatio="none"
-      >
-        {[12, 40, 68, 98].map((y) => (
-          <line key={y} x1={0} x2={480} y1={y} y2={y} className="histogram-grid" />
-        ))}
-        {enhanced.length > 0 && (
-          <path d={`${enhancedPath} L480,98 L0,98 Z`} className="histogram-fill" />
-        )}
-        <path d={path(original)} className="histogram-original" />
-        <path d={enhancedPath} className="histogram-enhanced" />
-      </svg>
-      <div className="histogram-ticks">
-        <span>0</span>
-        <span>64</span>
-        <span>128</span>
-        <span>192</span>
-        <span>255</span>
-      </div>
-    </div>
   );
 }

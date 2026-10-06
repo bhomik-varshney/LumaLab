@@ -161,6 +161,88 @@ The educational simulation remains accessible through the selected spatial metho
 and illustrates that one operation on the original image, separately from running
 multiple saved operations. No new dependency was added.
 
+## Noise Playground
+
+Select **Noise Playground** above the category navigation. The same uploaded clean
+original is used for every noise realization, separately from normal enhancement
+and saved sequences. Choose **Salt-and-pepper** (0–30% probability per pixel,
+equally divided into black/white impulses) or **Gaussian** (standard deviation σ
+from 0–0.2 on normalized 0–1 intensity; σ 0.05 is approximately 12.8 eight-bit
+brightness levels). This is standard deviation, not variance. The default seed is 42. **Add noise** reuses it; **Regenerate** chooses a new seed. Both start from the
+clean original, so repeated clicks do not compound noise.
+
+MATLAB generates noise using `add_image_noise.m` through the existing worker queue.
+RGB channels share each pixel's assignment or additive Gaussian sample; noise is
+not independent per channel. Class/range, dimensions and alpha are preserved;
+values clip to the representable range. Small Gaussian perturbations can quantize
+away on binary images. The worker's random state is restored after each job.
+
+Choose Mean, Gaussian, Median or Unsharp Mask, adjust the existing kernel/sigma/
+strength controls, then **Apply filter**. Every application starts from the same
+noisy image, never a previous filtered result. Switch the left comparison between
+**Clean original** and **Noisy input**. The right image shows noisy or filtered
+output, with its actual MATLAB histogram and statistics. Edited settings label
+older results as previous and block stale export. **Save noisy image** and **Save
+filtered image** download the respective MATLAB PNG with noise/filter/seed labels.
+**Reset playground** clears noisy and filtered results and restores the clean view;
+it leaves the normal studio and its saved sequence untouched. Mode switches retain
+the experiment; replacing the source image starts a fresh experiment. Histograms
+and contrast spread are not restoration-quality scores.
+
+The bridge retains at most 16 noise realizations in its temporary image registry.
+Older derived inputs may expire; generate noise again if a filter reports expiry.
+
+## Optional Groq AI Learning Assistant
+
+Open **AI Learning Assistant** in either workspace. Actions explain the selected
+result, saved ordered sequence, or an optional next experiment. An optional learning
+question is limited to 800 characters. Responses are labeled **AI-generated**, can
+be copied, and stay marked as earlier explanations when the experiment changes.
+Provider failures have retry controls; they never prevent MATLAB processing.
+
+Configure secrets **only in `bridge/.env`**, which Node reads on backend startup,
+or set `GROQ_API_KEY` and `GROQ_MODEL` in the backend process environment. The project
+`.env.example` has blank placeholders; no fallback model is assumed. For a fresh
+setup, if `bridge/.env` does not already exist:
+
+```sh
+cp .env.example bridge/.env
+chmod 600 bridge/.env
+```
+
+Edit that file locally with your own values:
+
+```dotenv
+GROQ_API_KEY=your_private_groq_key
+GROQ_MODEL=your_supplied_model_name
+```
+
+For this request, the supplied credentials were configured in the ignored local
+`bridge/.env`, with model `openai/gpt-oss-120b`. Its key is intentionally absent
+from this documentation. Restart `npm run dev:full` after changing configuration.
+Do not use `VITE_` variables for credentials. The bridge reads its own file;
+frontend tooling never loads it. Real `.env` files are ignored, while the blank
+`.env.example` is safe to commit. No new dependency is required.
+
+The server calls Groq's documented [Chat Completions endpoint](https://console.groq.com/docs/api-reference).
+Only allowlisted metadata is sent: selected parameters, saved and completed ordered
+steps, applied/draft noise settings, experiment status, dimensions/classes,
+measured mean/population standard deviation and histogram summaries (dark bins
+0–31, bright bins 224–255). No image, image URL, filename, uploaded bytes or image
+ID is sent. The model is instructed to distinguish measurements from general
+explanations, failed/pending/stale states from successful results, and suggestions
+from guaranteed improvements. It cannot inspect image contents, change settings,
+execute MATLAB or alter pixels. Explanations can still be mistaken.
+
+Backend validation limits JSON to 16 KiB, questions to 800 characters, sequences to
+six steps, active AI calls to two, requests to 25 seconds, provider responses to
+64 KiB, explanation text to 8,000 characters and completion tokens to 1,800.
+Missing configuration, rate limits, invalid models/credentials, network failures,
+timeouts and malformed responses return safe, actionable errors. Credentials,
+questions, provider payloads and raw provider errors are not logged. This optional
+cloud feature needs internet access and an available model in your Groq account.
+The Noise Playground works independently of Groq.
+
 ## Interactive filter walkthrough
 
 Choose Mean, Gaussian, Median, or Unsharp Mask and click **Simulate steps**. The
@@ -202,26 +284,28 @@ queuing a job; MATLAB validates them again at the processing boundary.
 
 The implemented endpoints are:
 
-| Endpoint                   | Request / response                                                                                                  |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/matlab/health`   | Actual worker status, MATLAB version, toolbox availability, recovery detail                                         |
-| `POST /api/matlab/images`  | Raw `image/png` or `image/jpeg` bytes → upload ID and gamma-1 result                                                |
-| `POST /api/matlab/process` | JSON `{imageId, category, method, parameters}` → enhanced/original PNG data URLs, histograms and statistics |
-| `POST /api/matlab/process` | JSON `{imageId, steps: [{category, method, parameters}], runId?}` → final sequence PNG, original PNG, actual final analysis and per-step metadata |
-| `GET /api/matlab/progress/:runId` | Actual MATLAB sequence state, current step/method, completed count and total; completed progress expires after five minutes |
+| Endpoint                          | Request / response                                                                                                                                  |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/matlab/health`          | Actual worker status, MATLAB version, toolbox availability, recovery detail                                                                         |
+| `POST /api/matlab/images`         | Raw `image/png` or `image/jpeg` bytes → upload ID and gamma-1 result                                                                                |
+| `POST /api/matlab/process`        | JSON `{imageId, category, method, parameters}` → enhanced/original PNG data URLs, histograms and statistics                                         |
+| `POST /api/matlab/process`        | JSON `{imageId, steps: [{category, method, parameters}], runId?}` → final sequence PNG, original PNG, actual final analysis and per-step metadata   |
+| `POST /api/matlab/process`        | JSON `{imageId, noise: {type, seed, density? or standardDeviation?}}` → clean/noisy PNGs, actual analysis and separate `noisyImageId` for filtering |
+| `POST /api/matlab/learning`       | Validated `{action, question?, context}` metadata → AI explanation through server-side Groq                                                         |
+| `GET /api/matlab/progress/:runId` | Actual MATLAB sequence state, current step/method, completed count and total; completed progress expires after five minutes                         |
 
 The shared request uses `category: "intensity"` or `"spatial"`. Only the selected
 method's parameters are accepted. Defaults are:
 
-| Method | Category | Parameters |
-| --- | --- | --- |
-| `gamma` | `intensity` | `{gamma: 1}` |
-| `equalize` | `intensity` | `{}` |
-| `stretch` | `intensity` | `{lowCutoff: 0.1, highCutoff: 0.9}` |
-| `mean`, `median` | `spatial` | `{kernelSize: 3}` |
-| `gaussian` | `spatial` | `{kernelSize: 5, sigma: 1}` |
-| `unsharp` | `spatial` | `{kernelSize: 5, sigma: 1, amount: 1}` |
-| `sobel` | `spatial` | `{}` |
+| Method           | Category    | Parameters                             |
+| ---------------- | ----------- | -------------------------------------- |
+| `gamma`          | `intensity` | `{gamma: 1}`                           |
+| `equalize`       | `intensity` | `{}`                                   |
+| `stretch`        | `intensity` | `{lowCutoff: 0.1, highCutoff: 0.9}`    |
+| `mean`, `median` | `spatial`   | `{kernelSize: 3}`                      |
+| `gaussian`       | `spatial`   | `{kernelSize: 5, sigma: 1}`            |
+| `unsharp`        | `spatial`   | `{kernelSize: 5, sigma: 1, amount: 1}` |
+| `sobel`          | `spatial`   | `{}`                                   |
 
 For example, `{imageId, category: "spatial", method: "gaussian", parameters:
 {kernelSize: 7, sigma: 1.6}}` requests the corresponding MATLAB blur. Cutoffs use
@@ -248,8 +332,12 @@ the bridge ready before MATLAB writes its readiness response.
 ```sh
 npx tsc --noEmit
 npm test
+npm run test:bridge
 # With dev:full already running and MATLAB status ready:
 npm run test:api
+npm run test:noise-api
+# Optional live Groq verification, with credentials configured on the running bridge:
+TEST_LIVE_GROQ=1 npm run test:noise-api
 # Standalone numeric/image checks; set MATLAB_BIN if MATLAB isn't on PATH:
 MATLAB_BIN="/absolute/path/to/matlab" npm run test:matlab
 npm run build
@@ -322,3 +410,22 @@ display and retry without claiming a partial result is current. Desktop/mobile
 captures were reviewed, and widths 320, 390, 768, and 1280 had no horizontal overflow.
 The large RGB histogram comparison normalizes samples before calculating luminance,
 matching MATLAB's arithmetic order at floating-point half-bin boundaries.
+
+Noise verification covers grayscale/RGB salt-and-pepper and Gaussian generation,
+seed reproducibility, RNG isolation, new realizations, no accumulation, supported
+classes/ranges, alpha, tiny images, zero strength, invalid settings, saved-image
+histograms/statistics and independent mean/median filtering of the noisy pixels.
+The live API check independently uploads the noisy PNG and matches the derived-ID
+filter output, confirming it consumes noise rather than the clean original.
+
+There are 19 frontend/calculation tests, including five new noise/assistant cases,
+and five isolated Node bridge tests. The latter use an explicitly stubbed provider
+to test missing configuration, request construction, malformed/oversized responses,
+credential-safe errors, provider/network failures and timeouts. Real Groq calls
+also succeeded using the supplied local credentials/model through the implemented
+backend; these were metadata-only requests, separate from stub tests. Browser
+verification covers the real Noise Playground, two filters, current/previous
+labels, clean/noisy comparisons, actual histograms, exact downloaded PNG bytes,
+reset/regeneration, AI grounding and live response, injected failure/retry, normal
+processing independence and responsive layouts. The credential value was checked
+against browser-facing responses and generated frontend assets, without printing it.

@@ -86,6 +86,10 @@ export function describeResult(result: ProcessingResult) {
   const { method, parameters: p } = result;
   if (method === "sequence")
     return `${result.steps?.length ?? 0}-step processing sequence${result.outputKind === "edge-map" ? " · edge map" : ""}`;
+  if (method === "noise")
+    return result.noise?.type === "salt-pepper"
+      ? `Salt-and-pepper · ${result.noise.density * 100}%`
+      : `Gaussian noise · σ ${result.noise?.standardDeviation}`;
   if (method === "gamma") return `γ ${result.gamma.toFixed(2)}`;
   if (method === "stretch")
     return `${Number((result.lowCutoff * 100).toFixed(4))}–${Number((result.highCutoff * 100).toFixed(4))}% input`;

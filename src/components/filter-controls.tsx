@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import type { Method } from "@/lib/matlab-api";
 import {
@@ -28,6 +29,7 @@ export function FilterControls({
   setSigmaValue,
   setAmountValue,
 }: Props) {
+  const controlId = useId();
   if (method === "sobel")
     return (
       <div className="automatic-note edge-note">
@@ -42,13 +44,13 @@ export function FilterControls({
     <div className="filter-controls method-controls">
       <div className="kernel-control">
         <div className="control-label">
-          <label htmlFor="kernel-size">Kernel size</label>
-          <output htmlFor="kernel-size" className="control-value">
+          <label htmlFor={`${controlId}-kernel`}>Kernel size</label>
+          <output htmlFor={`${controlId}-kernel`} className="control-value">
             {kernelSize} × {kernelSize}
           </output>
         </div>
         <input
-          id="kernel-size"
+          id={`${controlId}-kernel`}
           type="range"
           min={MIN_KERNEL_SIZE}
           max={MAX_KERNEL_SIZE}
@@ -57,7 +59,7 @@ export function FilterControls({
           disabled={disabled}
           className="parameter-slider"
           aria-valuetext={`${kernelSize} by ${kernelSize} pixels`}
-          aria-describedby="kernel-guidance"
+          aria-describedby={`${controlId}-guidance`}
           onChange={(event) => {
             const next = Number(event.target.value);
             if (isValidKernelSize(next)) setKernelSize(next);
@@ -68,7 +70,7 @@ export function FilterControls({
             <span key={size}>{size}</span>
           ))}
         </div>
-        <p id="kernel-guidance" className="filter-guidance">
+        <p id={`${controlId}-guidance`} className="filter-guidance">
           Odd sizes only, from 3 to 15.{" "}
           {footprintGuidance[method as keyof typeof footprintGuidance]}
         </p>
@@ -136,7 +138,7 @@ function FilterSlider({
 }) {
   const parsed = Number(value);
   const invalid = value.trim() === "" || !Number.isFinite(parsed) || parsed < min || parsed > max;
-  const id = `filter-${label.toLowerCase().replaceAll(" ", "-")}`;
+  const id = useId();
   return (
     <div className="filter-slider">
       <div className="control-label">

@@ -1259,6 +1259,214 @@ input[type="range"]::-moz-range-thumb {
 .simulation-entry {
   margin-top: 22px;
 }
+.processing-sequence {
+  margin: 22px 0;
+  border: 1px solid #60745166;
+  border-radius: 8px;
+  background: #1a251c77;
+}
+.processing-sequence > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 12px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  font-weight: 500;
+  color: #d8e8ce;
+}
+.processing-sequence > summary::-webkit-details-marker {
+  display: none;
+}
+.processing-sequence > summary > svg:first-child {
+  color: var(--lab);
+  flex-shrink: 0;
+}
+.processing-sequence > summary > svg:last-child {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.processing-sequence[open] > summary > svg:last-child {
+  transform: rotate(180deg);
+}
+.sequence-count {
+  font-size: 9px;
+  color: #9ab28b;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.sequence-body {
+  padding: 0 12px 14px;
+}
+.sequence-intro,
+.sequence-hint {
+  font-size: 9px;
+  color: #afc0a6;
+  line-height: 1.7;
+  margin: 0 0 12px;
+}
+.sequence-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 14px 0 10px;
+}
+.sequence-actions .studio-button {
+  justify-content: center;
+  font-size: 10px;
+  padding: 0 8px;
+  min-height: 36px;
+}
+.sequence-actions .studio-button svg {
+  flex-shrink: 0;
+}
+.sequence-step-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 8px;
+}
+.sequence-step-list > li {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 12px 0 12px 0;
+  border-left: 1px solid #627354;
+}
+.sequence-step-number {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  background: #273321;
+  border: 1px solid #687e57;
+  border-radius: 50%;
+  margin-left: -10px;
+  font-size: 9px;
+  color: #c4deb2;
+}
+.sequence-step-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sequence-step-copy > strong {
+  font-size: 10px;
+  line-height: 1.4;
+  font-weight: 500;
+  color: #e0ecd9;
+}
+.sequence-step-copy > span {
+  font-size: 9px;
+  color: #a5bd98;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.sequence-edit-actions {
+  display: flex;
+  gap: 1px;
+  flex-shrink: 0;
+}
+.sequence-edit-actions .icon-button {
+  width: 21px;
+  height: 27px;
+  color: #a5ba9c;
+}
+.active-sequence-step .sequence-step-number {
+  background: var(--lab);
+  color: #13210f;
+  box-shadow: 0 0 0 3px #b0ec9322;
+}
+.active-sequence-step .sequence-step-copy > strong {
+  color: var(--lab);
+}
+.complete-sequence-step .sequence-step-number {
+  border-color: #b0ec93;
+  color: #b0ec93;
+}
+.sequence-endpoint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 9px;
+  color: #b0c6a2;
+  padding: 8px 0;
+}
+.sequence-endpoint > i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #88a775;
+  margin-left: 6px;
+}
+.result-endpoint {
+  margin-bottom: 12px;
+  color: #cce5bd;
+}
+.sequence-status {
+  font-size: 10px;
+  line-height: 1.7;
+  padding: 10px;
+  border: 1px solid #65855455;
+  background: #263522;
+  border-radius: 5px;
+  color: #c6dcb9;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.sequence-success {
+  color: #d8f2c8;
+}
+.sequence-error {
+  border: 1px solid #aa765055;
+  background: #47332155;
+  color: #eac8a9;
+  padding: 10px;
+  border-radius: 5px;
+  margin: 12px 0;
+  font-size: 10px;
+  line-height: 1.7;
+}
+.sequence-error strong {
+  font-weight: 550;
+}
+.sequence-error p {
+  margin: 7px 0;
+}
+.sequence-error span {
+  font-size: 9px;
+  color: #d7b798;
+}
+.sequence-footer {
+  border-top: 1px solid #4c604355;
+  margin-top: 12px;
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sequence-footer > span {
+  font-size: 9px;
+  color: #9bb58d;
+  line-height: 1.7;
+}
+.sequence-footer .text-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  align-self: flex-start;
+}
+.sequence-preview-switch {
+  margin-top: 13px;
+  font-size: 10px;
+}
 .simulate-button {
   width: 100%;
   justify-content: center;

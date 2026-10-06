@@ -2,13 +2,21 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import type { ComponentType } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProcessingResult } from "@/lib/matlab-api";
-import { checkMatlab, enhanceImage, uploadImage } from "@/lib/matlab-api";
+import {
+  checkMatlab,
+  enhanceImage,
+  uploadImage,
+  runSequence,
+  checkSequenceProgress,
+} from "@/lib/matlab-api";
 import { Route } from "@/routes/index";
 
 vi.mock("@/lib/matlab-api", () => ({
   checkMatlab: vi.fn(),
   uploadImage: vi.fn(),
   enhanceImage: vi.fn(),
+  runSequence: vi.fn(),
+  checkSequenceProgress: vi.fn(),
 }));
 const LumaLab = Route.options.component as ComponentType;
 const original: ProcessingResult = {
@@ -29,6 +37,22 @@ const original: ProcessingResult = {
 };
 
 beforeEach(() => {
+  vi.mocked(checkSequenceProgress).mockResolvedValue({
+    state: "processing",
+    step: 2,
+    total: 3,
+    completedSteps: 1,
+    method: "median",
+  });
+  vi.mocked(runSequence).mockImplementation(async (_id, steps, runId) => ({
+    ...original,
+    category: "sequence",
+    method: "sequence",
+    parameters: {},
+    runId,
+    steps: steps.map((step) => ({ ...step, output: original.enhanced })),
+    url: "data:image/png;base64,c2VxdWVuY2U=",
+  }));
   vi.mocked(checkMatlab).mockResolvedValue({ status: "ready", detail: "MATLAB ready" });
   vi.mocked(uploadImage).mockResolvedValue(original);
   vi.mocked(enhanceImage).mockImplementation(async (_id, options) => ({
@@ -287,5 +311,145 @@ describe("MATLAB frontend integration", () => {
       ),
     );
     expect(screen.getByRole("button", { name: "Simulate steps" })).toBeEnabled();
+  });
+  it("saves sequence snapshots, reorders/removes them, exports the final result, and resets predictably", async () => {
+    const { container } = render(<LumaLab />);
+    const save = screen.getByRole("button", { name: "Save image" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(screen.getByText("Processing Sequence"));
+    const add = screen.getByRole("button", { name: "Add step" });
+    const run = screen.getByRole("button", { name: "Run sequence" });
+    expect(run).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Gamma numeric value"), { target: { value: "0.7" } });
+    fireEvent.click(add);
+    fireEvent.change(screen.getByLabelText("Gamma numeric value"), { target: { value: "0.8" } });
+    expect(container.querySelector(".sequence-step-list")).toHaveTextContent("γ 0.70");
+    fireEvent.click(screen.getByRole("button", { name: "Spatial Filtering" }));
+    fireEvent.click(screen.getByRole("button", { name: "Median" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Kernel size" }), {
+      target: { value: "5" },
+    });
+    fireEvent.click(add);
+    fireEvent.click(screen.getByRole("button", { name: "Intensity Transformations" }));
+    fireEvent.click(screen.getByRole("button", { name: "Contrast stretching" }));
+    fireEvent.change(screen.getByLabelText("Low cutoff"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("High cutoff"), { target: { value: "95" } });
+    fireEvent.click(add);
+    const names = () =>
+      Array.from(container.querySelectorAll(".sequence-step-copy strong")).map(
+        (node) => node.textContent,
+      );
+    expect(names()).toEqual(["Gamma correction", "Median", "Contrast stretching"]);
+    fireEvent.click(screen.getByRole("button", { name: "Move step 3 up" }));
+    expect(names()).toEqual(["Gamma correction", "Contrast stretching", "Median"]);
+    fireEvent.click(screen.getByRole("button", { name: "Remove step 3: Median" }));
+    expect(names()).toEqual(["Gamma correction", "Contrast stretching"]);
+    fireEvent.click(screen.getByRole("button", { name: "Spatial Filtering" }));
+    fireEvent.click(screen.getByRole("button", { name: "Median" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Kernel size" }), {
+      target: { value: "5" },
+    });
+    fireEvent.click(add);
+    fireEvent.click(screen.getByRole("button", { name: "Move step 3 up" }));
+    await waitFor(() => expect(run).toBeEnabled());
+    const expected = [
+      { category: "intensity", method: "gamma", parameters: { gamma: 0.7 } },
+      { category: "spatial", method: "median", parameters: { kernelSize: 5 } },
+      {
+        category: "intensity",
+        method: "stretch",
+        parameters: { lowCutoff: 0.05, highCutoff: 0.95 },
+      },
+    ];
+    fireEvent.click(run);
+    await waitFor(() =>
+      expect(runSequence).toHaveBeenCalledWith(
+        "test-image",
+        expected,
+        expect.any(String),
+        expect.any(AbortSignal),
+      ),
+    );
+    await waitFor(() => expect(save).toBeEnabled());
+    expect(screen.getByAltText("Sequence result preview")).toHaveAttribute(
+      "src",
+      "data:image/png;base64,c2VxdWVuY2U=",
+    );
+    expect(screen.getByText("SEQUENCE RESULT")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Sequence result" })).toBeInTheDocument();
+    const downloads: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      downloads.push(this.href);
+    });
+    fireEvent.click(save);
+    expect(downloads).toEqual(["data:image/png;base64,c2VxdWVuY2U="]);
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    await waitFor(() =>
+      expect(screen.getByAltText("Enhanced image preview")).toHaveAttribute("src", original.url),
+    );
+    expect(names()).toEqual(["Gamma correction", "Median", "Contrast stretching"]);
+    fireEvent.click(run);
+    await waitFor(() => expect(runSequence).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Move step 2 up" }));
+    expect(save).toBeDisabled();
+    expect(screen.queryByText("MATLAB SEQUENCE COMPLETE")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear sequence" }));
+    expect(names()).toEqual([]);
+    expect(run).toBeDisabled();
+    await waitFor(() =>
+      expect(screen.getByAltText("Enhanced image preview")).toHaveAttribute("src", original.url),
+    );
+  });
+
+  it("reports real step progress, blocks overlapping runs, and preserves the sequence after a failure", async () => {
+    let rejectRun: ((error: Error) => void) | undefined;
+    vi.mocked(runSequence).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectRun = reject;
+        }),
+    );
+    vi.mocked(checkSequenceProgress).mockResolvedValue({
+      state: "processing",
+      step: 2,
+      total: 2,
+      completedSteps: 1,
+      method: "median",
+    });
+    const { container } = render(<LumaLab />);
+    const save = screen.getByRole("button", { name: "Save image" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(screen.getByText("Processing Sequence"));
+    fireEvent.click(screen.getByRole("button", { name: "Add step" }));
+    fireEvent.click(screen.getByRole("button", { name: "Spatial Filtering" }));
+    fireEvent.click(screen.getByRole("button", { name: "Median" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add step" }));
+    const run = screen.getByRole("button", { name: "Run sequence" });
+    await waitFor(() => expect(run).toBeEnabled());
+    fireEvent.click(run);
+    await waitFor(() =>
+      expect(container.querySelector(".sequence-status")).toHaveTextContent(
+        "Applying step 2 of 2: Median",
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Running…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add step" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reset" })).toBeDisabled();
+    expect(save).toBeDisabled();
+    expect(runSequence).toHaveBeenCalledOnce();
+    rejectRun?.(
+      new Error("Step 2 (median) failed: invalid neighborhood. Remove it and add a valid size."),
+    );
+    await screen.findByText(/Step 2 \(median\) failed: invalid neighborhood/);
+    expect(container.querySelectorAll(".sequence-step-list li")).toHaveLength(2);
+    expect(save).toBeDisabled();
+    expect(screen.queryByText("MATLAB SEQUENCE COMPLETE")).not.toBeInTheDocument();
+    expect(screen.queryByAltText("Sequence result preview")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run sequence" }));
+    await waitFor(() => expect(save).toBeEnabled());
+    expect(runSequence).toHaveBeenCalledTimes(2);
   });
 });

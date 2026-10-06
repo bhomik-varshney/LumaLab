@@ -5,13 +5,16 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { processingOptions } from "./processing.mjs";
+import { processingOptions, sequenceOptions } from "./processing.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const workDir = await mkdtemp(join(tmpdir(), "lumalab-"));
 const port = Number(process.env.MATLAB_BRIDGE_PORT || 3001);
 const maxBytes = 10 * 1024 * 1024;
 const images = new Map();
+const runs = new Map();
+const activeImages = new Map();
+const sequenceImages = new Set();
 let worker;
 let status = "offline";
 let detail = "Starting MATLAB…";
@@ -130,10 +133,27 @@ async function body(request, limit) {
   return Buffer.concat(chunks);
 }
 
+async function readProgress(run) {
+  if (run.finished) return run.progress;
+  try {
+    const progress = JSON.parse(await readFile(run.progressPath, "utf8"));
+    if (!run.finished) run.progress = progress;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  return run.progress;
+}
+
 async function processImage(imageId, options) {
   if (status !== "ready") throw fail(detail, 503);
   const image = images.get(imageId);
   if (!image) throw fail("Image expired or was not uploaded. Upload it again.", 404);
+  const isSequence = !!options.steps;
+  if (sequenceImages.has(imageId) || (isSequence && activeImages.get(imageId)))
+    throw fail(
+      "This image is still processing. Wait for it to finish before running the sequence.",
+      409,
+    );
   if (pending >= 8) throw fail("MATLAB is busy. Wait for processing to finish and retry.", 429);
   image.usedAt = Date.now();
   const id = randomUUID();
@@ -141,6 +161,27 @@ async function processImage(imageId, options) {
   const responsePath = join(workDir, `${id}.response.json`);
   const outputPath = join(workDir, `${id}.png`);
   const originalPath = join(workDir, `${id}.original.png`);
+  const progressPath = join(workDir, `${id}.progress.json`);
+  const runId = isSequence ? options.runId || randomUUID() : undefined;
+  if (runId && runs.has(runId))
+    throw fail("This sequence run ID was already used. Start a new run.", 409);
+  const run = isSequence
+    ? {
+        progressPath,
+        usedAt: Date.now(),
+        progress: {
+          state: "queued",
+          step: 0,
+          total: options.steps.length,
+          completedSteps: 0,
+        },
+      }
+    : undefined;
+  if (run) {
+    runs.set(runId, run);
+    sequenceImages.add(imageId);
+  }
+  activeImages.set(imageId, (activeImages.get(imageId) || 0) + 1);
   pending += 1;
   try {
     await writeFile(
@@ -150,10 +191,11 @@ async function processImage(imageId, options) {
         outputPath,
         originalPath,
         ...options,
+        ...(run ? { progressPath } : {}),
       }),
     );
     await rename(`${requestPath}.tmp`, requestPath);
-    const deadline = Date.now() + 60000;
+    const deadline = Date.now() + 60000 * (options.steps?.length || 1);
     while (Date.now() < deadline) {
       if (status !== "ready") throw fail(detail, 503);
       let raw;
@@ -170,6 +212,7 @@ async function processImage(imageId, options) {
       return {
         ...payload.result,
         imageId,
+        ...(runId ? { runId } : {}),
         url: `data:image/png;base64,${output.toString("base64")}`,
         originalUrl: `data:image/png;base64,${original.toString("base64")}`,
       };
@@ -178,12 +221,34 @@ async function processImage(imageId, options) {
     detail = "MATLAB processing timed out. Restart the backend and upload a smaller image.";
     worker?.kill("SIGTERM");
     throw fail(detail, 504);
+  } catch (error) {
+    if (run) {
+      await readProgress(run);
+      run.progress = { ...run.progress, state: "error", error: error.message };
+    }
+    throw error;
   } finally {
+    if (run) {
+      // Cache completed/error progress before removing private job files.
+      if (run.progress.state !== "error") await readProgress(run);
+      run.finished = true;
+      run.usedAt = Date.now();
+      sequenceImages.delete(imageId);
+    }
+    const active = (activeImages.get(imageId) || 1) - 1;
+    if (active) activeImages.set(imageId, active);
+    else activeImages.delete(imageId);
     pending -= 1;
     await Promise.all(
-      [requestPath, `${requestPath}.tmp`, responsePath, outputPath, originalPath].map((path) =>
-        rm(path, { force: true }),
-      ),
+      [
+        requestPath,
+        `${requestPath}.tmp`,
+        responsePath,
+        outputPath,
+        originalPath,
+        progressPath,
+        `${progressPath}.tmp`,
+      ].map((path) => rm(path, { force: true })),
     );
   }
 }
@@ -198,6 +263,14 @@ const server = createServer(async (request, response) => {
   try {
     if (request.method === "GET" && request.url === "/api/matlab/health") {
       send(200, { status, detail, version, toolbox, processor: "MATLAB" });
+    } else if (
+      request.method === "GET" &&
+      /^\/api\/matlab\/progress\/[a-f\d-]{36}$/i.test(request.url)
+    ) {
+      const runId = request.url.split("/").at(-1);
+      const run = runs.get(runId);
+      if (!run) throw fail("Sequence progress is not available yet or has expired.", 404);
+      send(200, { runId, ...(await readProgress(run)), processor: "MATLAB" });
     } else if (request.method === "POST" && request.url === "/api/matlab/images") {
       if (status !== "ready") throw fail(detail, 503);
       const type = request.headers["content-type"];
@@ -236,7 +309,8 @@ const server = createServer(async (request, response) => {
       }
       if (!input || typeof input.imageId !== "string")
         throw fail("A valid uploaded imageId is required.");
-      send(200, await processImage(input.imageId, processingOptions(input)));
+      const options = input.steps === undefined ? processingOptions(input) : sequenceOptions(input);
+      send(200, await processImage(input.imageId, options));
     } else send(404, { error: "Unknown API route." });
   } catch (error) {
     send(error.statusCode || 500, {
@@ -250,6 +324,9 @@ const server = createServer(async (request, response) => {
 
 const expiry = setInterval(() => {
   if (pending) return;
+  for (const [id, run] of runs) {
+    if (Date.now() - run.usedAt > 5 * 60 * 1000) runs.delete(id);
+  }
   for (const [id, image] of images) {
     if (Date.now() - image.usedAt > 30 * 60 * 1000) {
       images.delete(id);

@@ -26,13 +26,23 @@ export type ProcessingResult = {
   enhanced: ImageInfo;
   histograms: { original: number[]; enhanced: number[] };
   processor: "MATLAB";
-  category: Category;
-  method: Method;
+  category: Category | "sequence";
+  method: Method | "sequence";
   parameters: Parameters;
   outputKind: "enhanced" | "edge-map";
   gamma: number;
   lowCutoff: number;
   highCutoff: number;
+  steps?: (ProcessingOptions & { output: ImageInfo })[];
+  runId?: string;
+};
+export type SequenceProgress = {
+  state: "queued" | "processing" | "exporting" | "complete" | "error";
+  step: number;
+  total: number;
+  completedSteps: number;
+  method?: Method;
+  error?: string;
 };
 export type Health = { status: "starting" | "ready" | "offline"; detail: string };
 
@@ -72,3 +82,17 @@ export const enhanceImage = (imageId: string, options: ProcessingOptions, signal
     body: JSON.stringify({ imageId, ...options }),
     signal,
   });
+export const runSequence = (
+  imageId: string,
+  steps: ProcessingOptions[],
+  runId: string,
+  signal: AbortSignal,
+) =>
+  request<ProcessingResult>("process", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ imageId, steps, runId }),
+    signal,
+  });
+export const checkSequenceProgress = (runId: string, signal: AbortSignal) =>
+  request<SequenceProgress>(`progress/${runId}`, { signal });

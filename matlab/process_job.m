@@ -7,62 +7,58 @@ end
 if ~isempty(map)
     input = restore_image_class(ind2rgb(input, map), 'uint8');
 end
-method = char(job.method);
-intensityMethods = {'gamma','equalize','stretch'};
-spatialMethods = {'mean','gaussian','median','unsharp','sobel'};
-if ~ismember(method, [intensityMethods spatialMethods])
-    error('LumaLab:Method', 'Choose a supported intensity transformation or spatial filter.');
-end
-if ismember(method, intensityMethods), category = 'intensity'; else, category = 'spatial'; end
-if isfield(job, 'category') && ~strcmp(char(job.category), category)
-    error('LumaLab:Category', 'Category does not match the selected method.');
-end
-if isfield(job, 'parameters')
-    settings = job.parameters;
-    if ~isstruct(settings) || ~isscalar(settings)
-        error('LumaLab:Parameters', 'Method parameters must be a JSON object.');
-    end
-else
-    settings = job; % Compatibility with established intensity jobs.
-end
-gamma = setting(settings, 'gamma', 1);
-lowCutoff = setting(settings, 'lowCutoff', 0.1);
-highCutoff = setting(settings, 'highCutoff', 0.9);
-switch method
-    case 'gamma', parameters = struct('gamma', gamma);
-    case 'equalize', parameters = struct();
-    case 'stretch', parameters = struct('lowCutoff', lowCutoff, 'highCutoff', highCutoff);
-    case 'sobel', parameters = struct();
-    otherwise
-        defaultKernel = 3;
-        if ismember(method, {'gaussian','unsharp'}), defaultKernel = 5; end
-        kernelSize = setting(settings, 'kernelSize', defaultKernel);
-        sigma = setting(settings, 'sigma', 1);
-        amount = setting(settings, 'amount', 1);
-        parameters = struct('kernelSize', kernelSize);
-        if ismember(method, {'gaussian','unsharp'}), parameters.sigma = sigma; end
-        if strcmp(method, 'unsharp'), parameters.amount = amount; end
-end
-if isfield(job, 'parameters') && any(~ismember(fieldnames(settings), fieldnames(parameters)))
-    error('LumaLab:Parameters', 'Only send parameters for the selected method.');
-end
-if strcmp(category, 'intensity')
-    output = enhance_image(input, method, gamma, lowCutoff, highCutoff);
-else
-    output = spatial_filter(input, method, setting(parameters,'kernelSize',3), ...
-        setting(parameters,'sigma',1), setting(parameters,'amount',1));
-end
 outputKind = 'enhanced';
-if strcmp(method, 'sobel'), outputKind = 'edge-map'; end
+completed = {};
+if isfield(job,'steps')
+    steps = job.steps;
+    if ~(iscell(steps) || isstruct(steps)) || isempty(steps) || numel(steps) > 6
+        error('LumaLab:Sequence','Add between 1 and 6 operations to the sequence.');
+    end
+    output = input;
+    for index = 1:numel(steps)
+        if iscell(steps), step = steps{index}; else, step = steps(index); end
+        name = 'unknown';
+        if isstruct(step) && isfield(step,'method') && (ischar(step.method) || isstring(step.method))
+            name = char(step.method);
+        end
+        progress = struct('state','processing','step',index,'total',numel(steps), ...
+            'method',name,'completedSteps',index-1);
+        write_job_progress(job,progress);
+        try
+            [output, operation] = apply_operation(output,step);
+            [info,~] = image_analysis(output);
+            completed{index} = struct('category',operation.category,'method',operation.method, ...
+                'parameters',operation.parameters,'output',info);
+            if strcmp(operation.method,'sobel'), outputKind = 'edge-map'; end
+        catch exception
+            message = sprintf('Step %d (%s) failed: %s',index,name,exception.message);
+            progress.state = 'error'; progress.error = message;
+            write_job_progress(job,progress);
+            error('LumaLab:SequenceStep','%s',message);
+        end
+    end
+    operation = struct('category','sequence','method','sequence','parameters',struct(), ...
+        'gamma',1,'lowCutoff',0.1,'highCutoff',0.9);
+    progress.state = 'exporting'; progress.completedSteps = numel(steps);
+    write_job_progress(job,progress);
+else
+    [output,operation] = apply_operation(input,job);
+    if strcmp(operation.method,'sobel'), outputKind = 'edge-map'; end
+end
 [originalInfo, originalHistogram] = image_analysis(input);
 [enhancedInfo, enhancedHistogram] = image_analysis(output);
 write_png(input, job.originalPath, alpha);
 write_png(output, job.outputPath, alpha);
-result = struct('original', originalInfo, 'enhanced', enhancedInfo, ...
-    'histograms', struct('original', originalHistogram, 'enhanced', enhancedHistogram), ...
-    'category', category, 'method', method, 'parameters', parameters, ...
-    'outputKind', outputKind, 'gamma', gamma, ...
-    'lowCutoff', lowCutoff, 'highCutoff', highCutoff, 'processor', 'MATLAB');
+result = struct('original',originalInfo,'enhanced',enhancedInfo, ...
+    'histograms',struct('original',originalHistogram,'enhanced',enhancedHistogram), ...
+    'category',operation.category,'method',operation.method,'parameters',operation.parameters, ...
+    'outputKind',outputKind,'gamma',operation.gamma,'lowCutoff',operation.lowCutoff, ...
+    'highCutoff',operation.highCutoff,'processor','MATLAB');
+if isfield(job,'steps')
+    result.steps = completed;
+    progress.state = 'complete';
+    write_job_progress(job,progress);
+end
 end
 
 function write_png(image, path, alpha)
@@ -77,8 +73,4 @@ if isempty(alpha)
 else
     imwrite(image, path, 'png', 'Alpha', alpha);
 end
-end
-
-function value = setting(settings, field, fallback)
-if isfield(settings, field), value = settings.(field); else, value = fallback; end
 end

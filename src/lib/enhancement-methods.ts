@@ -1,4 +1,4 @@
-import type { Category, Method, ProcessingResult } from "./matlab-api";
+import type { Category, Method, Parameters, ProcessingResult } from "./matlab-api";
 
 export const categories: { id: Category; name: string; description: string }[] = [
   {
@@ -84,6 +84,8 @@ export const methods: {
 
 export function describeResult(result: ProcessingResult) {
   const { method, parameters: p } = result;
+  if (method === "sequence")
+    return `${result.steps?.length ?? 0}-step processing sequence${result.outputKind === "edge-map" ? " · edge map" : ""}`;
   if (method === "gamma") return `γ ${result.gamma.toFixed(2)}`;
   if (method === "stretch")
     return `${Number((result.lowCutoff * 100).toFixed(4))}–${Number((result.highCutoff * 100).toFixed(4))}% input`;
@@ -91,4 +93,14 @@ export function describeResult(result: ProcessingResult) {
   if (method === "sobel") return "Sobel · grayscale edge map";
   const name = methods.find((item) => item.id === method)!.name;
   return `${name} · ${p.kernelSize}×${p.kernelSize}${p.sigma !== undefined ? ` · σ ${p.sigma.toFixed(2)}` : ""}${p.amount !== undefined ? ` · strength ${p.amount.toFixed(2)}` : ""}`;
+}
+
+export function describeOperation(operation: { method: Method; parameters: Parameters }) {
+  const p = operation.parameters;
+  if (operation.method === "gamma") return `γ ${p.gamma?.toFixed(2)}`;
+  if (operation.method === "stretch")
+    return `low ${Number(((p.lowCutoff ?? 0.1) * 100).toFixed(4))}%, high ${Number(((p.highCutoff ?? 0.9) * 100).toFixed(4))}%`;
+  if (operation.method === "equalize") return "Automatic CDF mapping";
+  if (operation.method === "sobel") return "3×3 · grayscale edge map";
+  return `${p.kernelSize}×${p.kernelSize}${p.sigma !== undefined ? `, σ ${p.sigma}` : ""}${p.amount !== undefined ? `, strength ${p.amount}` : ""}`;
 }

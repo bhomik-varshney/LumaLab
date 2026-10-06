@@ -123,6 +123,44 @@ MATLAB-capable server.
   plus Home/End. Original previews are labeled honestly if MATLAB is unavailable.
   Start/restart the backend, then use Retry processing if needed.
 
+## Processing Sequence
+
+Expand **Processing Sequence** below the method controls. Configure one operation
+using the existing controls and click **Add step** to save its parameter snapshot.
+Add up to six steps, move them using the up/down buttons, or remove a step. Later
+control changes never modify saved steps; to edit one, remove it and add the new
+settings. **Run sequence** always starts with the current original image and
+applies the saved steps in the displayed order. All eight methods are supported.
+
+For example: Original → Gamma (γ 0.70) → Median (5×5) → Stretch (low 5%, high 95%)
+→ Final result. MATLAB keeps each operation's output in memory and passes it to
+the next operation, using the same algorithms, native class handling, and border
+rules as single-operation processing. The original remains separate. If Sobel
+appears anywhere in the sequence, the final output remains labeled as an edge map,
+including when a later operation changes its brightness.
+
+The final image appears in the existing comparison stage as **SEQUENCE RESULT**
+(or **SEQUENCE EDGE MAP**), with its actual histogram/statistics. Save downloads
+that exact final MATLAB PNG. Reset restores the original preview and keeps the
+configured sequence. Clear sequence removes its steps and restores the original.
+Loading a different image retains the steps but requires an explicit new run.
+Changing method controls returns to a single-operation preview; **Preview selected
+operation** also switches back without changing saved steps.
+
+MATLAB reports its actual current step and completed-step count; the browser polls
+this progress every 350 ms. Very quick steps can finish between polls. The UI uses
+step labels rather than an estimated percentage. Controls that could change or
+rerun the active sequence are disabled, and the bridge rejects overlapping runs
+for the same image. Validation and MATLAB errors identify the failed step. A
+failed/changed sequence leaves any previous image labeled as previous and disables
+Save until a current run succeeds; a partial result is never returned as complete.
+
+The sequence is held for the current page session. Compact per-step parameters
+and actual statistics are returned, without retaining full-size intermediate PNGs.
+The educational simulation remains accessible through the selected spatial method
+and illustrates that one operation on the original image, separately from running
+multiple saved operations. No new dependency was added.
+
 ## Interactive filter walkthrough
 
 Choose Mean, Gaussian, Median, or Unsharp Mask and click **Simulate steps**. The
@@ -158,7 +196,7 @@ calculation/image decoding) and `filter-simulation.tsx` (modal and interaction).
 `bridge/server.mjs` uses Node built-ins only and launches MATLAB with `spawn`
 (no shell). A private temporary directory holds atomic JSON job requests/responses.
 `matlab/lumalab_worker.m` handles them sequentially, calling `process_job.m`,
-`enhance_image.m` or `spatial_filter.m`, and `image_analysis.m`. No engine bindings
+`apply_operation.m`, `enhance_image.m` or `spatial_filter.m`, and `image_analysis.m`. No engine bindings
 are required. `bridge/processing.mjs` validates method/category/settings before
 queuing a job; MATLAB validates them again at the processing boundary.
 
@@ -169,6 +207,8 @@ The implemented endpoints are:
 | `GET /api/matlab/health`   | Actual worker status, MATLAB version, toolbox availability, recovery detail                                         |
 | `POST /api/matlab/images`  | Raw `image/png` or `image/jpeg` bytes → upload ID and gamma-1 result                                                |
 | `POST /api/matlab/process` | JSON `{imageId, category, method, parameters}` → enhanced/original PNG data URLs, histograms and statistics |
+| `POST /api/matlab/process` | JSON `{imageId, steps: [{category, method, parameters}], runId?}` → final sequence PNG, original PNG, actual final analysis and per-step metadata |
+| `GET /api/matlab/progress/:runId` | Actual MATLAB sequence state, current step/method, completed count and total; completed progress expires after five minutes |
 
 The shared request uses `category: "intensity"` or `"spatial"`. Only the selected
 method's parameters are accepted. Defaults are:
@@ -191,9 +231,16 @@ and an omitted category is inferred from the method. Responses include the actua
 eight methods use the same MATLAB worker path. No new dependency was added for
 spatial filtering or the visual refinement.
 
+Sequence responses use `category: "sequence"`, `method: "sequence"`, and a `steps`
+array with each applied category/method/parameter snapshot and `output` statistics.
+The optional request `runId` is a UUID used to poll progress; the response always
+returns the run ID. Empty sequences, more than six steps, invalid methods/settings,
+or mixed single-operation/sequence requests are rejected. Sequence settings are
+validated by the bridge and again by MATLAB's shared dispatcher.
+
 The service binds only to loopback, limits upload bytes and queued jobs, validates
 file signatures and parameters, and bounds startup (90 seconds) and processing
-(60 seconds). If MATLAB fails or times out, restart the backend; health never labels
+(60 seconds per requested operation, up to six minutes for a sequence). If MATLAB fails or times out, restart the backend; health never labels
 the bridge ready before MATLAB writes its readiness response.
 
 ## Focused verification
@@ -224,9 +271,12 @@ chrominance, small images, supported classes, and invalid settings. They also
 process grayscale and RGB images, preserve 16-bit alpha, and independently analyze
 the saved outputs. The API check uses `src/assets/lumalab-sample.jpg` and exercises
 all eight methods through the actual frontend proxy → Node → MATLAB path plus
-input/category/settings failures. Eight routing/component tests cover presets,
+input/category/settings failures. Ten routing/component tests cover presets,
 cutoff synchronization, categories, filter settings/validation, edge-map labeling,
 reset, save, obsolete responses, comparison, empty state, and an unavailable bridge.
+The sequence cases cover frozen parameter snapshots, ordering/removal, progress,
+run locking, final result/save labels, reset preserving steps, stale-result export
+blocking, clear, and failure/retry without partial success.
 Four focused calculation tests independently check sums, Gaussian weights, sorting,
 RGB luminance, size-dependent results, strength zero, and replicated small images.
 MATLAB numeric checks cover all seven allowed kernel sizes; live API checks exercise
@@ -256,3 +306,19 @@ walkthrough, responsive modal widths, focus restoration, an empty-state load act
 and a 1×1 image with a 15×15 kernel. A simulated disconnected health state confirmed
 that the local illustration works without processing requests or MATLAB-result
 claims while Save remains disabled.
+
+Sequence MATLAB tests compare a mixed Gamma → Median → Stretch run with independent
+direct algorithm composition, check actual final/per-step analysis and alpha,
+exercise all eight operations, confirm order-dependent results, and verify that a
+second-step failure records progress/error without writing a partial output. The
+live API test independently composes saved MATLAB PNG outputs and matches the
+sequence's final image chunks, histogram, and statistics exactly. It also verifies
+actual progress, overlapping-run rejection, and indexed invalid-step errors.
+Browser sequence checks cover saved snapshots, add/reorder/remove, actual rendered
+final histogram/statistics, exact downloaded bytes, original comparison, reset
+preserving steps and rerunning, a new input image, clear, single-operation previews,
+and the existing simulation. An injected indexed error response verifies failure
+display and retry without claiming a partial result is current. Desktop/mobile
+captures were reviewed, and widths 320, 390, 768, and 1280 had no horizontal overflow.
+The large RGB histogram comparison normalizes samples before calculating luminance,
+matching MATLAB's arithmetic order at floating-point half-bin boundaries.

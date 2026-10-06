@@ -15,13 +15,28 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import sampleImage from "@/assets/lumalab-sample.jpg";
-import { checkMatlab, uploadImage, enhanceImage } from "@/lib/matlab-api";
-import type { Health, Method, ProcessingResult, ProcessingOptions } from "@/lib/matlab-api";
+import {
+  checkMatlab,
+  uploadImage,
+  enhanceImage,
+  runSequence,
+  checkSequenceProgress,
+} from "@/lib/matlab-api";
+import type {
+  Health,
+  Method,
+  ProcessingResult,
+  ProcessingOptions,
+  SequenceProgress,
+} from "@/lib/matlab-api";
 
 import { categories, methods, describeResult } from "@/lib/enhancement-methods";
 import { FilterControls, NeighborhoodDiagram } from "@/components/filter-controls";
 import { FilterSimulation } from "@/components/filter-simulation";
 import { isValidKernelSize } from "@/lib/filter-settings";
+import { ProcessingSequence } from "@/components/processing-sequence";
+import { MAX_SEQUENCE_STEPS, sequenceSignature } from "@/lib/processing-sequence";
+import type { SequenceStep, SequencePhase } from "@/lib/processing-sequence";
 
 type ViewMode = "split" | "side-by-side";
 const gammaPresets = [
@@ -70,6 +85,14 @@ function LumaLab() {
   const category = selected.category;
   const [result, setResult] = useState<ProcessingResult | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [previewMode, setPreviewMode] = useState<"single" | "sequence">("single");
+  const [sequenceSteps, setSequenceSteps] = useState<SequenceStep[]>([]);
+  const [sequencePhase, setSequencePhase] = useState<SequencePhase>("idle");
+  const [sequenceProgress, setSequenceProgress] = useState<SequenceProgress | null>(null);
+  const [sequenceError, setSequenceError] = useState("");
+  const [sequenceRunId, setSequenceRunId] = useState<string | null>(null);
+  const sequenceController = useRef<AbortController | null>(null);
+  const sequenceRunning = sequencePhase === "running";
   const [imageFile, setImageFile] = useState<Blob | null>(null);
   const [imageId, setImageId] = useState<string | null>(null);
   const [health, setHealth] = useState<Health>({
@@ -149,6 +172,16 @@ function LumaLab() {
   }, [imageFile]);
 
   useEffect(() => {
+    if (sequenceController.current) {
+      sequenceController.current.abort();
+      sequenceController.current = null;
+      setSequencePhase("error");
+      setSequenceError(
+        "The image or MATLAB connection changed. Wait for MATLAB to be ready, then run the saved sequence again.",
+      );
+    } else setSequencePhase("idle");
+    setPreviewMode("single");
+    setSequenceProgress(null);
     setImageId(null);
     setResult(null);
     neutralResult.current = null;
@@ -193,7 +226,33 @@ function LumaLab() {
                 : {};
     return { category, method, parameters };
   }, [category, method, gamma, low, high, kernelSize, sigma, amount]);
+  // Changing controls returns to the single-operation preview. Saved snapshots
+  // stay untouched; starting a sequence does not change these controls.
   useEffect(() => {
+    setPreviewMode("single");
+  }, [options]);
+  useEffect(() => () => sequenceController.current?.abort(), []);
+  useEffect(() => {
+    if (!sequenceRunning || !sequenceRunId) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const progress = await checkSequenceProgress(sequenceRunId, controller.signal);
+        if (!controller.signal.aborted) setSequenceProgress(progress);
+      } catch {
+        /* A run may not be registered yet. The processing response owns errors. */
+      }
+      if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 350);
+    };
+    timer = setTimeout(() => void poll(), 150);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [sequenceRunning, sequenceRunId]);
+  useEffect(() => {
+    if (previewMode === "sequence") return;
     if (!imageId || health.status !== "ready") return;
     if (parameterError) {
       setIsProcessing(false);
@@ -226,17 +285,26 @@ function LumaLab() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [imageId, options, method, gamma, health.status, parameterError]);
+  }, [imageId, options, method, gamma, health.status, parameterError, previewMode]);
 
-  const hasCurrentResult =
+  const hasCurrentSequence =
     !!result &&
-    !parameterError &&
-    result.method === method &&
-    result.category === category &&
-    Object.entries(options.parameters).every(
-      ([key, value]) => result.parameters[key as keyof typeof result.parameters] === value,
-    );
-  const canAdjust = !!imageFile && !!imageId && health.status === "ready";
+    previewMode === "sequence" &&
+    sequencePhase === "success" &&
+    result.method === "sequence" &&
+    result.imageId === imageId &&
+    sequenceSignature(result.steps ?? []) === sequenceSignature(sequenceSteps);
+  const hasCurrentResult =
+    hasCurrentSequence ||
+    (!!result &&
+      previewMode === "single" &&
+      !parameterError &&
+      result.method === method &&
+      result.category === category &&
+      Object.entries(options.parameters).every(
+        ([key, value]) => result.parameters[key as keyof typeof result.parameters] === value,
+      ));
+  const canAdjust = !!imageFile && !!imageId && health.status === "ready" && !sequenceRunning;
   const canSave = hasCurrentResult && !isProcessing && health.status === "ready";
   const source = neutralResult.current;
   const selectedMethod = selected.name;
@@ -247,24 +315,42 @@ function LumaLab() {
         ? "Connecting to MATLAB"
         : "MATLAB unavailable";
   const explanation = selected.explanation;
-  const previewStatus = isProcessing
-    ? "Processing in MATLAB…"
-    : hasCurrentResult
-      ? "MATLAB PROCESSED"
-      : result
-        ? "Previous result · adjust to update"
-        : "Original preview";
+  const previewStatus = sequenceRunning
+    ? sequenceProgress?.state === "processing"
+      ? `Applying step ${sequenceProgress.step} of ${sequenceProgress.total}: ${methods.find((item) => item.id === sequenceProgress.method)?.name ?? sequenceProgress.method}`
+      : sequenceProgress?.state === "exporting" || sequenceProgress?.state === "complete"
+        ? "Preparing final sequence result…"
+        : "Waiting for MATLAB to run the sequence…"
+    : isProcessing
+      ? "Processing in MATLAB…"
+      : hasCurrentResult
+        ? hasCurrentSequence
+          ? "MATLAB SEQUENCE COMPLETE"
+          : "MATLAB PROCESSED"
+        : result
+          ? result.method === "sequence"
+            ? "Previous sequence result · run to update"
+            : "Previous result · adjust to update"
+          : "Original preview";
   const enhancedLabel = hasCurrentResult
-    ? result?.outputKind === "edge-map"
-      ? "EDGE MAP"
-      : "ENHANCED"
+    ? hasCurrentSequence
+      ? result?.outputKind === "edge-map"
+        ? "SEQUENCE EDGE MAP"
+        : "SEQUENCE RESULT"
+      : result?.outputKind === "edge-map"
+        ? "EDGE MAP"
+        : "ENHANCED"
     : result
-      ? result.outputKind === "edge-map"
-        ? "LAST EDGE MAP"
-        : "LAST RESULT"
+      ? result.method === "sequence"
+        ? "LAST SEQUENCE RESULT"
+        : result.outputKind === "edge-map"
+          ? "LAST EDGE MAP"
+          : "LAST RESULT"
       : "ORIGINAL PREVIEW";
   const resultParameters = result ? describeResult(result) : "Awaiting MATLAB";
   const chooseMethod = (next: Method) => {
+    if (sequenceRunning) return;
+    setPreviewMode("single");
     if (next === method) return;
     setMethod(next);
     if (methods.find((item) => item.id === next)?.category === "spatial") {
@@ -275,6 +361,7 @@ function LumaLab() {
   };
 
   const openFile = (file?: File) => {
+    if (sequenceController.current) return;
     if (!file) return;
     if (!/^image\/(png|jpeg)$/.test(file.type)) {
       setErrorMessage("Choose a PNG or JPEG image.");
@@ -303,6 +390,10 @@ function LumaLab() {
     setSplit(50);
   };
   const resetImage = () => {
+    setPreviewMode("single");
+    setSequencePhase("idle");
+    setSequenceProgress(null);
+    setSequenceError("");
     setGammaValue("1");
     setLowValue("10");
     setHighValue("90");
@@ -314,6 +405,77 @@ function LumaLab() {
     setZoom(100);
     setViewMode("split");
     setErrorMessage("");
+  };
+  const updateSequence = (steps: SequenceStep[]) => {
+    setSequenceSteps(steps);
+    setSequencePhase("idle");
+    setSequenceError("");
+    setSequenceProgress(null);
+  };
+  const addSequenceStep = () => {
+    if (sequenceController.current || parameterError || !imageUrl) return;
+    const snapshot = { ...options, parameters: { ...options.parameters }, id: crypto.randomUUID() };
+    setSequenceSteps((current) =>
+      current.length < MAX_SEQUENCE_STEPS ? [...current, snapshot] : current,
+    );
+    setSequencePhase("idle");
+    setSequenceError("");
+    setSequenceProgress(null);
+  };
+  const moveSequenceStep = (index: number, direction: -1 | 1) => {
+    if (sequenceController.current) return;
+    const next = [...sequenceSteps],
+      target = index + direction;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target]!, next[index]!];
+    updateSequence(next);
+  };
+  const startSequence = async () => {
+    if (
+      sequenceController.current ||
+      !canAdjust ||
+      isProcessing ||
+      !imageId ||
+      !sequenceSteps.length
+    )
+      return;
+    const controller = new AbortController();
+    sequenceController.current = controller;
+    const runId = crypto.randomUUID();
+    const steps = sequenceSteps.map(({ category, method, parameters }) => ({
+      category,
+      method,
+      parameters: { ...parameters },
+    }));
+    setPreviewMode("sequence");
+    setSequencePhase("running");
+    setIsProcessing(true);
+    setSequenceRunId(runId);
+    setSequenceProgress(null);
+    setSequenceError("");
+    setErrorMessage("");
+    try {
+      const output = await runSequence(imageId, steps, runId, controller.signal);
+      if (controller.signal.aborted) return;
+      setResult(output);
+      setSequencePhase("success");
+      setSequenceProgress({
+        state: "complete",
+        step: steps.length,
+        total: steps.length,
+        completedSteps: steps.length,
+      });
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setSequencePhase("error");
+        setSequenceError((error as Error).message);
+      }
+    } finally {
+      if (sequenceController.current === controller) {
+        sequenceController.current = null;
+        setIsProcessing(false);
+      }
+    }
   };
   const removeImage = () => {
     sampleLoader.current?.abort();
@@ -348,9 +510,13 @@ function LumaLab() {
       }
       alt={
         enhanced
-          ? result?.outputKind === "edge-map"
-            ? "Sobel edge map preview"
-            : "Enhanced image preview"
+          ? result?.method === "sequence"
+            ? result.outputKind === "edge-map"
+              ? "Sequence edge map preview"
+              : "Sequence result preview"
+            : result?.outputKind === "edge-map"
+              ? "Sobel edge map preview"
+              : "Enhanced image preview"
           : "Original image preview"
       }
       draggable={false}
@@ -387,6 +553,7 @@ function LumaLab() {
             type="button"
             className="studio-button secondary"
             onClick={() => fileInputRef.current?.click()}
+            disabled={sequenceRunning}
           >
             <Upload size={15} />
             <span>Upload image</span>
@@ -421,6 +588,7 @@ function LumaLab() {
                 className="category-choice"
                 aria-label={item.name}
                 aria-pressed={category === item.id}
+                disabled={sequenceRunning}
                 onClick={() => {
                   if (item.id !== category)
                     chooseMethod(item.id === "intensity" ? "gamma" : "gaussian");
@@ -660,7 +828,13 @@ function LumaLab() {
                   </span>
                   <span>
                     <i className="enhanced-swatch" />
-                    Enhanced
+                    {result?.method === "sequence"
+                      ? result.outputKind === "edge-map"
+                        ? "Sequence edge map"
+                        : "Sequence result"
+                      : result?.outputKind === "edge-map"
+                        ? "Edge map"
+                        : "Enhanced"}
                   </span>
                   <small>Brightness · 0–255</small>
                 </div>
@@ -685,7 +859,13 @@ function LumaLab() {
                       <th scope="col">Measure</th>
                       <th scope="col">Original</th>
                       <th scope="col">
-                        {result?.outputKind === "edge-map" ? "Edge map" : "Enhanced"}
+                        {result?.method === "sequence"
+                          ? result.outputKind === "edge-map"
+                            ? "Sequence edge map"
+                            : "Sequence result"
+                          : result?.outputKind === "edge-map"
+                            ? "Edge map"
+                            : "Enhanced"}
                       </th>
                     </tr>
                   </thead>
@@ -721,6 +901,7 @@ function LumaLab() {
               <button
                 type="button"
                 className="upload-zone"
+                disabled={sequenceRunning}
                 data-dragging={isDropActive}
                 onClick={() => fileInputRef.current?.click()}
                 onDragOver={(event) => {
@@ -746,6 +927,7 @@ function LumaLab() {
                 accept="image/png,image/jpeg,.jpg,.jpeg"
                 className="sr-only"
                 aria-label="Upload image file"
+                disabled={sequenceRunning}
                 onChange={(event) => {
                   openFile(event.target.files?.[0]);
                   event.currentTarget.value = "";
@@ -768,6 +950,7 @@ function LumaLab() {
                     onClick={removeImage}
                     aria-label="Remove image"
                     title="Remove image"
+                    disabled={sequenceRunning}
                   >
                     <X size={13} />
                   </button>
@@ -792,7 +975,7 @@ function LumaLab() {
                       key={item.id}
                       aria-label={item.name}
                       aria-pressed={method === item.id}
-                      disabled={!imageUrl}
+                      disabled={!imageUrl || sequenceRunning}
                       onClick={() => chooseMethod(item.id)}
                     >
                       {item.short}
@@ -1001,7 +1184,7 @@ function LumaLab() {
                   kernelSize={kernelSize}
                   sigmaValue={sigmaValue}
                   amountValue={amountValue}
-                  disabled={!imageUrl}
+                  disabled={!imageUrl || sequenceRunning}
                   setKernelSize={setKernelSize}
                   setSigmaValue={setSigmaValue}
                   setAmountValue={setAmountValue}
@@ -1024,17 +1207,58 @@ function LumaLab() {
               )}
               <p className="auto-preview-note">
                 <span className="status-dot" />
-                {!imageFile
-                  ? "Load an image to begin."
-                  : !canAdjust
-                    ? health.status === "ready"
-                      ? "Reading your image in MATLAB…"
-                      : "Waiting for the MATLAB connection."
-                    : isProcessing
-                      ? "Updating your preview…"
-                      : "Changes preview automatically."}
+                {sequenceRunning
+                  ? "Running your saved sequence…"
+                  : hasCurrentSequence
+                    ? "Viewing the final sequence result."
+                    : !imageFile
+                      ? "Load an image to begin."
+                      : !canAdjust
+                        ? health.status === "ready"
+                          ? "Reading your image in MATLAB…"
+                          : "Waiting for the MATLAB connection."
+                        : isProcessing
+                          ? "Updating your preview…"
+                          : "Changes preview automatically."}
               </p>
+              {previewMode === "sequence" && (
+                <button
+                  type="button"
+                  className="text-button sequence-preview-switch"
+                  disabled={sequenceRunning}
+                  onClick={() => setPreviewMode("single")}
+                >
+                  Preview selected operation
+                </button>
+              )}
             </section>
+
+            <ProcessingSequence
+              steps={sequenceSteps}
+              phase={sequencePhase}
+              progress={sequenceProgress}
+              error={sequenceError}
+              canAdd={!!imageUrl && !parameterError}
+              canRun={canAdjust && !isProcessing}
+              isCurrentResult={hasCurrentSequence}
+              runHint={
+                !imageUrl
+                  ? "Load an image before running these steps."
+                  : health.status !== "ready"
+                    ? "Start MATLAB to run the saved sequence."
+                    : isProcessing
+                      ? "Wait for the current preview to finish, then run the sequence."
+                      : "Run these saved steps to view their final result."
+              }
+              onAdd={addSequenceStep}
+              onRun={() => void startSequence()}
+              onMove={moveSequenceStep}
+              onRemove={(id) => updateSequence(sequenceSteps.filter((step) => step.id !== id))}
+              onClear={() => {
+                updateSequence([]);
+                resetImage();
+              }}
+            />
 
             <details className="learning-notes">
               <summary>
@@ -1097,12 +1321,14 @@ function LumaLab() {
                 type="button"
                 className="studio-button secondary reset-button"
                 onClick={resetImage}
-                disabled={!imageUrl}
+                disabled={!imageUrl || sequenceRunning}
               >
                 <RotateCcw size={14} />
                 Reset
               </button>
-              <span>Original stays untouched.</span>
+              <span>
+                {sequenceSteps.length ? "Reset keeps saved steps." : "Original stays untouched."}
+              </span>
             </div>
           </aside>
         </div>

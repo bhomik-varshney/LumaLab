@@ -68,9 +68,11 @@ for (const gamma of [0, -1, "bad"]) {
 }
 for (const [method, parameters] of [
   ["mean", { kernelSize: 3 }],
+  ["mean", { kernelSize: 15 }],
   ["gaussian", { kernelSize: 5, sigma: 1 }],
+  ["gaussian", { kernelSize: 13, sigma: 1.6 }],
   ["median", { kernelSize: 3 }],
-  ["median", { kernelSize: 7 }],
+  ["median", { kernelSize: 15 }],
   ["unsharp", { kernelSize: 5, sigma: 1, amount: 1 }],
   ["sobel", {}],
 ]) {
@@ -103,7 +105,11 @@ for (const [method, parameters] of [
 for (const input of [
   { category: "intensity", method: "mean", parameters: { kernelSize: 3 } },
   { category: "spatial", method: "mean", parameters: { kernelSize: 4 } },
-  { category: "spatial", method: "median", parameters: { kernelSize: 9 } },
+  ...[2, 14, 16, 17, 3.5, "9", null].map((kernelSize) => ({
+    category: "spatial",
+    method: "median",
+    parameters: { kernelSize },
+  })),
   { category: "spatial", method: "gaussian", parameters: { sigma: 0 } },
   { category: "spatial", method: "gaussian", parameters: { sigma: 4 } },
   { category: "spatial", method: "unsharp", parameters: { amount: -1 } },

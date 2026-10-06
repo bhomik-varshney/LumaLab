@@ -86,12 +86,22 @@ MATLAB-capable server.
   adds a scaled difference between the image and its Gaussian blur. Sobel computes
   gradient magnitude with a fixed normalization and produces a clearly labeled
   **grayscale edge map**, including for RGB input.
-- Spatial filters use replicated boundaries, work on tiny images, and accept only
-  3×3, 5×5, or 7×7 neighborhoods. Gaussian sigma is 0.3–3; sharpening strength is
+- Mean, Gaussian, Median, and Unsharp Mask use replicated boundaries, work on tiny
+  images, and accept **every odd kernel size from 3×3 through 15×15**. The visible
+  size slider steps by two and rejects invalid values; the bridge and MATLAB also
+  reject even, fractional, or out-of-range sizes. Size changes preserve sigma and
+  sharpening strength and use the existing debounced MATLAB processing path.
+  Gaussian sigma is 0.3–3; sharpening strength is
   0–3, with zero giving an exact identity. RGB smoothing/sharpening uses BT.601
   luminance and adds its change to all channels, retaining chrominance before
   clipping. This preserves color but does not remove purely chromatic noise.
   No Image Processing Toolbox functions are called.
+- Kernel size sets the spatial footprint. Larger mean windows blur more detail;
+  larger median windows may remove larger noise regions while erasing small
+  features. Gaussian weights depend separately on sigma: at fixed sigma, expanding
+  the window has little effect once significant weights fit inside it. Unsharp
+  uses that Gaussian footprint to extract detail, then scales it by strength.
+  Sobel retains its fixed 3×3 derivative operator.
 - MATLAB functions preserve `uint8`, `uint16`, `int16`, `single`, `double`, and
   `logical` image classes and their standard ranges. Floating inputs must be finite
   and within 0–1. Indexed PNGs are expanded to RGB. PNG alpha is retained unchanged.
@@ -106,12 +116,42 @@ MATLAB-capable server.
   real result remains visible and is labeled as such. Reset restores gamma 1, the
   original returned PNG, default cutoffs, split layout, divider, and zoom. Save
   downloads the current enhanced PNG and is disabled until the selected operation
-  succeeds. Advanced neighborhood/sigma settings are collapsed by default. Reset
+  succeeds. Unsharp's advanced sigma setting is collapsed by default. Reset
   also returns to the intensity category and restores filter defaults. Edge-map
   labels, histogram legends, and statistics headings identify Sobel output.
   The divider supports dragging and Left/Right keys (Shift for 10% steps),
   plus Home/End. Original previews are labeled honestly if MATLAB is unavailable.
   Start/restart the backend, then use Retry processing if needed.
+
+## Interactive filter walkthrough
+
+Choose Mean, Gaussian, Median, or Unsharp Mask and click **Simulate steps**. The
+focused modal uses a real crop from the selected original image and the current
+kernel/sigma/strength. Select a pixel in the image or magnified crop, or move it
+using row/column inputs and the image's arrow keys. Previous/Next, numbered steps,
+Play/Pause, and Replay keep the learning sequence separate from processing state.
+
+- Mean collects values, shows their sum and division, and replaces one center pixel.
+- Median orders the real neighborhood and highlights the middle value.
+- Gaussian visualizes normalized weights and weighted contributions before showing
+  the local result; sigma remains independent of the window size.
+- Unsharp shows original, Gaussian blur, signed detail, scaled detail, and sharpened
+  luminance crops with the corresponding center-pixel calculation.
+
+The modal is explicitly an **illustrative local simulation**, using browser-decoded
+8-bit BT.601 luminance on a 0–255 scale; numeric labels are rounded. It does not
+claim to show MATLAB intermediate data, exact RGB channel values, or a full-image
+enhancement. Native precision, decoder differences, transparency, and RGB clipping
+can cause differences from exported pixels. Borders replicate the nearest pixel,
+including when the entire image is smaller than the kernel. The complete
+neighborhood is sampled even outside the visible crop.
+
+The walkthrough can run with MATLAB offline, while actual processing/export remain
+unavailable. Opening, moving, or replaying the simulation never changes the saved
+MATLAB result. An empty image state links back to loading an image. Sobel's action
+is disabled with an explicit explanation because it has no walkthrough yet.
+No dependencies were added. Implementation lives in `filter-simulation.ts` (local
+calculation/image decoding) and `filter-simulation.tsx` (modal and interaction).
 
 ## Integration boundary
 
@@ -184,9 +224,14 @@ chrominance, small images, supported classes, and invalid settings. They also
 process grayscale and RGB images, preserve 16-bit alpha, and independently analyze
 the saved outputs. The API check uses `src/assets/lumalab-sample.jpg` and exercises
 all eight methods through the actual frontend proxy → Node → MATLAB path plus
-input/category/settings failures. Seven routing/component tests cover presets,
+input/category/settings failures. Eight routing/component tests cover presets,
 cutoff synchronization, categories, filter settings/validation, edge-map labeling,
 reset, save, obsolete responses, comparison, empty state, and an unavailable bridge.
+Four focused calculation tests independently check sums, Gaussian weights, sorting,
+RGB luminance, size-dependent results, strength zero, and replicated small images.
+MATLAB numeric checks cover all seven allowed kernel sizes; live API checks exercise
+small and large Mean, Gaussian, and Median windows and reject invalid sizes. The
+15×15 median took about 6.3 seconds on the 1536×1024 sample on this machine.
 
 The supplied screenshot was not accessible, so the running app was inspected.
 Headless Chromium verification used MATLAB-generated low-contrast grayscale and RGB
@@ -196,7 +241,18 @@ decimals), cutoff/filter errors, real download bytes matching the MATLAB respons
 reset, pointer/keyboard comparison, side-by-side mode, fit-to-view, and empty-image
 state. For every spatial filter on grayscale and RGB inputs, the browser separately
 recomputed the rendered image's histogram, mean, and deviation and matched MATLAB's
-response. Spatial requests on the 1536×1024 sample took approximately 0.6–2 seconds
-on this machine, including the 7×7 median window.
+response. Spatial requests on the 1536×1024 sample took approximately 0.6–6.4 seconds
+on this machine, including the 15×15 median window.
 Desktop/mobile rendering was visually reviewed; widths 320, 390, 768, and 1280 showed
 no horizontal overflow. VS Code execution remains outside these checks.
+
+Walkthrough browser checks stepped through all four methods at 3×3 and 15×15 on
+known grayscale/RGB images. An independent calculation from their actual pixels
+matched each displayed local output; grayscale examples also matched MATLAB's
+exported center pixel after rounding. Checks covered sorting, Gaussian weights,
+separate sigma/strength, center and border positions, Previous/Next, Play/Pause,
+Replay, arrow-key movement, unchanged enhancement/download bytes, Sobel's disabled
+walkthrough, responsive modal widths, focus restoration, an empty-state load action,
+and a 1×1 image with a 15×15 kernel. A simulated disconnected health state confirmed
+that the local illustration works without processing requests or MATLAB-result
+claims while Save remains disabled.

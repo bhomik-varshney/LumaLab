@@ -1,5 +1,11 @@
 import { Check, ChevronDown } from "lucide-react";
 import type { Method } from "@/lib/matlab-api";
+import {
+  MIN_KERNEL_SIZE,
+  MAX_KERNEL_SIZE,
+  isValidKernelSize,
+  footprintGuidance,
+} from "@/lib/filter-settings";
 
 type Props = {
   method: Method;
@@ -34,34 +40,39 @@ export function FilterControls({
     );
   return (
     <div className="filter-controls method-controls">
-      {(method === "mean" || method === "median") && (
-        <>
-          <div className="control-label">
-            <span>Smoothing</span>
-            <span className="control-value">
-              {kernelSize === 3 ? "Light" : kernelSize === 5 ? "Balanced" : "Strong"}
-            </span>
-          </div>
-          <div className="preset-row">
-            {[
-              { size: 3, label: "Light" },
-              { size: 5, label: "Balanced" },
-              { size: 7, label: "Strong" },
-            ].map(({ size, label }) => (
-              <button
-                type="button"
-                key={size}
-                className="preset-button"
-                disabled={disabled}
-                aria-pressed={kernelSize === size}
-                onClick={() => setKernelSize(size)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+      <div className="kernel-control">
+        <div className="control-label">
+          <label htmlFor="kernel-size">Kernel size</label>
+          <output htmlFor="kernel-size" className="control-value">
+            {kernelSize} × {kernelSize}
+          </output>
+        </div>
+        <input
+          id="kernel-size"
+          type="range"
+          min={MIN_KERNEL_SIZE}
+          max={MAX_KERNEL_SIZE}
+          step={2}
+          value={kernelSize}
+          disabled={disabled}
+          className="parameter-slider"
+          aria-valuetext={`${kernelSize} by ${kernelSize} pixels`}
+          aria-describedby="kernel-guidance"
+          onChange={(event) => {
+            const next = Number(event.target.value);
+            if (isValidKernelSize(next)) setKernelSize(next);
+          }}
+        />
+        <div className="kernel-ticks" aria-hidden="true">
+          {[3, 5, 7, 9, 11, 13, 15].map((size) => (
+            <span key={size}>{size}</span>
+          ))}
+        </div>
+        <p id="kernel-guidance" className="filter-guidance">
+          Odd sizes only, from 3 to 15.{" "}
+          {footprintGuidance[method as keyof typeof footprintGuidance]}
+        </p>
+      </div>
       {method === "gaussian" && (
         <FilterSlider
           label="Blur strength"
@@ -88,27 +99,6 @@ export function FilterControls({
           <ChevronDown size={13} />
         </summary>
         <div className="advanced-body">
-          <div className="control-label">
-            <span>Neighborhood size</span>
-            <span className="control-value">
-              {kernelSize} × {kernelSize}
-            </span>
-          </div>
-          <div className="preset-row" role="group" aria-label="Neighborhood size">
-            {[3, 5, 7].map((size) => (
-              <button
-                type="button"
-                className="preset-button"
-                key={size}
-                disabled={disabled}
-                aria-label={`${size} by ${size} neighborhood`}
-                aria-pressed={kernelSize === size}
-                onClick={() => setKernelSize(size)}
-              >
-                {size} × {size}
-              </button>
-            ))}
-          </div>
           {method === "unsharp" && (
             <FilterSlider
               label="Blur sigma"

@@ -224,11 +224,13 @@ describe("MATLAB frontend integration", () => {
     );
     await waitFor(() => expect(save).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Median" }));
-    fireEvent.click(screen.getByRole("button", { name: "Strong" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Kernel size" }), {
+      target: { value: "15" },
+    });
     await waitFor(() =>
       expect(enhanceImage).toHaveBeenLastCalledWith(
         "test-image",
-        { category: "spatial", method: "median", parameters: { kernelSize: 7 } },
+        { category: "spatial", method: "median", parameters: { kernelSize: 15 } },
         expect.any(AbortSignal),
       ),
     );
@@ -248,5 +250,42 @@ describe("MATLAB frontend integration", () => {
       "aria-pressed",
       "true",
     );
+  });
+  it("changes kernel footprint without changing Gaussian sigma or unsharp strength", async () => {
+    render(<LumaLab />);
+    const save = screen.getByRole("button", { name: "Save image" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Spatial Filtering" }));
+    fireEvent.change(screen.getByLabelText("Blur strength"), { target: { value: "1.7" } });
+    const kernel = screen.getByRole("slider", { name: "Kernel size" });
+    expect(kernel).toHaveAttribute("step", "2");
+    fireEvent.change(kernel, { target: { value: "13" } });
+    await waitFor(() =>
+      expect(enhanceImage).toHaveBeenLastCalledWith(
+        "test-image",
+        { category: "spatial", method: "gaussian", parameters: { kernelSize: 13, sigma: 1.7 } },
+        expect.any(AbortSignal),
+      ),
+    );
+    await waitFor(() => expect(save).toBeEnabled());
+    const count = vi.mocked(enhanceImage).mock.calls.length;
+    fireEvent.change(kernel, { target: { value: "8" } });
+    expect(kernel).toHaveValue("13");
+    expect(enhanceImage).toHaveBeenCalledTimes(count);
+    fireEvent.click(screen.getByRole("button", { name: "Unsharp Mask" }));
+    fireEvent.change(screen.getByLabelText("Sharpening strength"), { target: { value: "2.1" } });
+    fireEvent.change(kernel, { target: { value: "11" } });
+    await waitFor(() =>
+      expect(enhanceImage).toHaveBeenLastCalledWith(
+        "test-image",
+        {
+          category: "spatial",
+          method: "unsharp",
+          parameters: { kernelSize: 11, sigma: 1, amount: 2.1 },
+        },
+        expect.any(AbortSignal),
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Simulate steps" })).toBeEnabled();
   });
 });

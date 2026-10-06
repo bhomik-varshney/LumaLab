@@ -20,6 +20,8 @@ import type { Health, Method, ProcessingResult, ProcessingOptions } from "@/lib/
 
 import { categories, methods, describeResult } from "@/lib/enhancement-methods";
 import { FilterControls, NeighborhoodDiagram } from "@/components/filter-controls";
+import { FilterSimulation } from "@/components/filter-simulation";
+import { isValidKernelSize } from "@/lib/filter-settings";
 
 type ViewMode = "split" | "side-by-side";
 const gammaPresets = [
@@ -95,12 +97,14 @@ function LumaLab() {
       ? "Low cutoff must be below high cutoff. Use values from 0 to 100%."
       : method === "gamma" && (!Number.isFinite(gamma) || gamma < 0.2 || gamma > 3)
         ? "Choose a gamma value between 0.2 and 3."
-        : (method === "gaussian" || method === "unsharp") &&
-            (!Number.isFinite(sigma) || sigma < 0.3 || sigma > 3)
-          ? "Choose a Gaussian sigma between 0.3 and 3."
-          : method === "unsharp" && (!Number.isFinite(amount) || amount < 0 || amount > 3)
-            ? "Choose a sharpening strength between 0 and 3."
-            : "";
+        : category === "spatial" && method !== "sobel" && !isValidKernelSize(kernelSize)
+          ? "Choose an odd kernel size from 3 to 15."
+          : (method === "gaussian" || method === "unsharp") &&
+              (!Number.isFinite(sigma) || sigma < 0.3 || sigma > 3)
+            ? "Choose a Gaussian sigma between 0.3 and 3."
+            : method === "unsharp" && (!Number.isFinite(amount) || amount < 0 || amount > 3)
+              ? "Choose a sharpening strength between 0 and 3."
+              : "";
 
   useEffect(() => {
     let active = true;
@@ -788,7 +792,7 @@ function LumaLab() {
                       key={item.id}
                       aria-label={item.name}
                       aria-pressed={method === item.id}
-                      disabled={!canAdjust}
+                      disabled={!imageUrl}
                       onClick={() => chooseMethod(item.id)}
                     >
                       {item.short}
@@ -997,7 +1001,7 @@ function LumaLab() {
                   kernelSize={kernelSize}
                   sigmaValue={sigmaValue}
                   amountValue={amountValue}
-                  disabled={!canAdjust}
+                  disabled={!imageUrl}
                   setKernelSize={setKernelSize}
                   setSigmaValue={setSigmaValue}
                   setAmountValue={setAmountValue}
@@ -1007,6 +1011,16 @@ function LumaLab() {
                 <p className="parameter-error" id="parameter-error" role="alert">
                   {parameterError}
                 </p>
+              )}
+              {category === "spatial" && (
+                <FilterSimulation
+                  method={method}
+                  imageUrl={imageUrl}
+                  kernelSize={kernelSize}
+                  sigma={method === "gaussian" || method === "unsharp" ? sigma : 1}
+                  amount={method === "unsharp" ? amount : 1}
+                  onLoadImage={() => fileInputRef.current?.click()}
+                />
               )}
               <p className="auto-preview-note">
                 <span className="status-dot" />

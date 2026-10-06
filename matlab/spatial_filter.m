@@ -4,9 +4,12 @@ function output = spatial_filter(input, method, kernelSize, sigma, amount)
 arguments
     input {mustBeNumericOrLogical, mustBeNonempty}
     method (1,:) char {mustBeMember(method, {'mean','gaussian','median','unsharp','sobel'})}
-    kernelSize (1,1) double {mustBeMember(kernelSize, [3 5 7])} = 3
+    kernelSize (1,1) double {mustBeFinite, mustBeInteger, mustBeGreaterThanOrEqual(kernelSize,3), mustBeLessThanOrEqual(kernelSize,15)} = 3
     sigma (1,1) double {mustBeFinite, mustBePositive} = 1
     amount (1,1) double {mustBeFinite, mustBeNonnegative} = 1
+end
+if mod(kernelSize,2) ~= 1
+    error('LumaLab:KernelSize', 'Kernel size must be an odd integer from 3 to 15.');
 end
 if sigma < 0.3 || sigma > 3 || amount > 3
     error('LumaLab:FilterSettings', 'Sigma must be 0.3-3 and sharpening strength must be 0-3.');

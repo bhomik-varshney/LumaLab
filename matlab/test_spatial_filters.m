@@ -30,21 +30,34 @@ for imageClass = {'uint8','uint16','int16','single','double','logical'}
         assert(all(isfinite(values(:))) && all(values(:) >= 0 & values(:) <= 1));
     end
 end
-for kernelSize = [3 5 7]
+for kernelSize = 3:2:15
     for method = methods
         tiny = spatial_filter(uint8(128), method{1}, kernelSize);
         assert(isscalar(tiny));
         if strcmp(method{1}, 'sobel'), assert(tiny == 0); else, assert(tiny == 128); end
     end
 end
+largeImpulse = zeros(33); largeImpulse(17,17) = 1;
+for kernelSize = 3:2:15
+    averaged = spatial_filter(largeImpulse, 'mean', kernelSize);
+    assert(abs(averaged(17,17)-1/kernelSize^2) < 1e-12);
+    assert(abs(sum(averaged(:))-1) < 1e-12);
+    gaussian = spatial_filter(largeImpulse, 'gaussian', kernelSize, 2);
+    assert(abs(sum(gaussian(:))-1) < 1e-12);
+end
+patch = zeros(33); patch(14:20,14:20) = 1;
+smallMedian = spatial_filter(patch,'median',3);
+largeMedian = spatial_filter(patch,'median',15);
+assert(smallMedian(17,17) == 1 && largeMedian(17,17) == 0);
 rgb = cat(3, step+0.03, step, step-0.03);
+assert(isequal(spatial_filter(rgb, 'unsharp', 15, 2, 0), rgb));
 for method = {'mean','gaussian','median','unsharp'}
     output = spatial_filter(rgb, method{1}, 3, 1, 1);
     difference = (output(:,:,1)-output(:,:,2)) - (rgb(:,:,1)-rgb(:,:,2));
     assert(max(abs(difference(:))) < 1e-12); % Interior gamut: chrominance retained.
 end
 assert(size(spatial_filter(rgb, 'sobel'),3) == 1);
-for kernelSize = [0 2 4 9 NaN]
+for kernelSize = [0 2 4 14 16 17 3.5 Inf NaN]
     rejected = false;
     try, spatial_filter(step,'mean',kernelSize); catch, rejected = true; end
     assert(rejected);

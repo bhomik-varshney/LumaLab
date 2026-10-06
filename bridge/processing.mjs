@@ -61,8 +61,14 @@ export function processingOptions(input) {
       parameters.highCutoff - parameters.lowCutoff < 1e-6)
   )
     invalid("Cutoffs must be within 0–100%, with low below high.");
-  if (fields.includes("kernelSize") && ![3, 5, 7].includes(parameters.kernelSize))
-    invalid("Choose an odd neighborhood size: 3×3, 5×5 or 7×7.");
+  if (
+    fields.includes("kernelSize") &&
+    (!Number.isInteger(parameters.kernelSize) ||
+      parameters.kernelSize < 3 ||
+      parameters.kernelSize > 15 ||
+      parameters.kernelSize % 2 !== 1)
+  )
+    invalid("Kernel size must be an odd integer from 3 to 15.");
   if (
     fields.includes("sigma") &&
     (!finite(parameters.sigma) || parameters.sigma < 0.3 || parameters.sigma > 3)

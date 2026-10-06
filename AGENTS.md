@@ -8,3 +8,6 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+## Architecture decisions
+- Keep the interactive image laboratory on the index route and perform prototype image transforms with the browser Canvas API, so it works without accounts or a server and clearly remains separate from a future MATLAB integration.

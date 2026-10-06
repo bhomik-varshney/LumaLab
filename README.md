@@ -28,7 +28,7 @@ Python enhancement fallback is used.
 ```sh
 cd pixel-perfect-view-9751
 npm ci --legacy-peer-deps
-npm run dev:full
+./run-site.sh
 ```
 
 Open **http://localhost:8080**. `dev:full` starts the frontend and the local bridge

@@ -1,0 +1,2 @@
+- [x] Build LumaLab’s responsive image-enhancement workspace, browser-based transforms, and analysis views.
+- [ ] Verify the sample workflow, method switching, file upload, export, and responsive layout in the live preview; resolve any observed errors.

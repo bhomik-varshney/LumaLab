@@ -161,7 +161,7 @@ it("assistant sends current metadata only and labels an explanation stale when c
   );
   vi.stubGlobal("fetch", fetchMock);
   const { rerender } = render(<LearningAssistant context={context} />);
-  fireEvent.click(screen.getByRole("button", { name: /AI Learning Assistant/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Open LUMA AI" }));
   fireEvent.click(screen.getByRole("button", { name: "Explain my sequence" }));
   const payload = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
   expect(payload.context).toEqual(context);
@@ -192,7 +192,7 @@ it("assistant errors have a retry and do not call or disable MATLAB operations",
     );
   vi.stubGlobal("fetch", fetchMock);
   render(<LearningAssistant context={context} />);
-  fireEvent.click(screen.getByRole("button", { name: /AI Learning Assistant/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Open LUMA AI" }));
   fireEvent.click(screen.getByRole("button", { name: "Explain this result" }));
   await screen.findByText("AI assistant is not configured.");
   fireEvent.click(screen.getByRole("button", { name: "Retry explanation" }));

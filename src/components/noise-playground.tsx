@@ -177,7 +177,7 @@ export function NoisePlayground({
       )}
       <div className="studio-grid noise-grid">
         <div className="inspect-column">
-          <div className="preview-card">
+          <div className="preview-card" data-light-surface>
             <div className="preview-toolbar">
               <span className="noise-file">
                 {fileName || "No image selected"}
@@ -299,7 +299,11 @@ export function NoisePlayground({
             </section>
           </div>
         </div>
-        <aside className="adjustments-panel" aria-label="Noise experiment controls">
+        <aside
+          className="adjustments-panel"
+          data-light-surface
+          aria-label="Noise experiment controls"
+        >
           <div className="panel-heading">
             <h2>Noise Playground</h2>
             <span className="eyebrow">EXPERIMENT</span>

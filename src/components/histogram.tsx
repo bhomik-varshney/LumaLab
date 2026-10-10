@@ -7,6 +7,7 @@ export function Histogram({
   enhanced: number[];
   label?: string;
 }) {
+  const gradientId = useId();
   const peak = Math.max(...original, ...enhanced, 1);
   const path = (bins: number[]) =>
     bins
@@ -27,12 +28,28 @@ export function Histogram({
         </span>
       </div>
       <svg viewBox="0 0 480 108" role="img" aria-label={label} preserveAspectRatio="none">
+        <defs>
+          <linearGradient id={gradientId} x1="0" x2="480" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stopColor="var(--histogram-shadow)" />
+            <stop offset="45%" stopColor="var(--primary)" />
+            <stop offset="78%" stopColor="var(--coral)" />
+            <stop offset="100%" stopColor="var(--champagne)" />
+          </linearGradient>
+        </defs>
         {[12, 40, 68, 98].map((y) => (
           <line key={y} x1={0} x2={480} y1={y} y2={y} className="histogram-grid" />
         ))}
-        {enhanced.length > 0 && (
-          <path d={`${enhancedPath} L480,98 L0,98 Z`} className="histogram-fill" />
-        )}
+        {enhanced.map((value, index) => (
+          <rect
+            key={index}
+            x={(index / 256) * 480}
+            y={98 - (value / peak) * 86}
+            width={480 / 256 - 0.4}
+            height={(value / peak) * 86}
+            fill={`url(#${gradientId})`}
+            rx="0.6"
+          />
+        ))}
         <path d={path(original)} className="histogram-original" />
         <path d={enhancedPath} className="histogram-enhanced" />
       </svg>
@@ -46,3 +63,4 @@ export function Histogram({
     </div>
   );
 }
+import { useId } from "react";

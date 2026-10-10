@@ -467,7 +467,7 @@ it("a rejected AI recommendation leaves the manual sequence available and never 
       truncated: false,
     }),
   );
-  fireEvent.click(screen.getByRole("button", { name: /AI Learning Assistant/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Open LUMA AI" }));
   fireEvent.click(screen.getByRole("button", { name: "Suggest what to try next" }));
   await screen.findByText(/Not executable/);
   expect(screen.queryByRole("button", { name: "Review sequence" })).not.toBeInTheDocument();

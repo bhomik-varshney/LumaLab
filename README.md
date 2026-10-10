@@ -1,10 +1,19 @@
 # Pixel Perfect Pix
 
 LumaLab is a local image enhancement laboratory with a React/TanStack Start frontend
-and real MATLAB processing. Its midnight/ivory studio dashboard with amber actions and dusty blue analysis centers the image
-comparison, with selective glass panels, contextual adjustments, and actual image
+and real MATLAB processing. Its porcelain studio follows the warm crimson/coral
+reference dashboard: a serif wordmark, navigation rail, prominent image comparison,
+right-hand histogram and tools, and a full-width saved-sequence strip. Shared warm
+surfaces and subtle lighting support contextual adjustments and actual image
 histograms/statistics. Intensity transformations change tones; spatial filters
 use neighboring pixels to smooth noise, sharpen detail, or reveal edges.
+
+The fixed lower-right **LUMA AI** button opens the Groq-backed learning assistant.
+The workspace reserves safe-area-aware clearance for the launcher and stacks its
+panels on smaller screens. Pointer lighting affects only surface materials and
+frame edges, stays static on touch screens, and respects reduced motion. Histogram
+bars use actual luminance counts; preset curves illustrate the existing settings,
+and sequence thumbnails show only the real input and completed output.
 
 This project was built with [Lovable](https://lovable.dev).
 

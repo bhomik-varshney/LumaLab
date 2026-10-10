@@ -1,13 +1,11 @@
-import { MessageCircle, Send, Sparkles, X } from "lucide-react";
-import { useEffect, useRef, useState, useId, type FormEvent, type PointerEvent } from "react";
+import { Send, Sparkles, X } from "lucide-react";
+import { useEffect, useRef, useState, useId, type FormEvent } from "react";
 import { explainLearning } from "@/lib/learning-context";
 import { AiMarkdown } from "./ai-markdown";
 import { plainExplanation } from "@/lib/markdown-text";
 import { RecommendationReview } from "./recommendation-review";
 import type { SequenceRecommendation, LearningContext } from "@/lib/learning-context";
 import { describeOperation } from "@/lib/enhancement-methods";
-
-const positionEvent = "lumalab-assistant-position-change";
 
 export function LearningAssistant({
   context,
@@ -43,126 +41,15 @@ export function LearningAssistant({
   const [copied, setCopied] = useState(false);
   const controller = useRef<AbortController | null>(null);
   const launcherRef = useRef<HTMLButtonElement>(null);
-  const dragRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    left: number;
-    top: number;
-  } | null>(null);
-  const draggedRef = useRef(false);
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
   const id = useId();
   const signature = JSON.stringify(context);
-
   useEffect(() => () => controller.current?.abort(), []);
-
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("lumalab-assistant-position");
-      if (!saved) return;
-      const parsed: unknown = JSON.parse(saved);
-      if (
-        typeof parsed !== "object" ||
-        parsed === null ||
-        !("left" in parsed) ||
-        !("top" in parsed) ||
-        typeof parsed.left !== "number" ||
-        typeof parsed.top !== "number"
-      )
-        return;
-      const bounds = launcherRef.current?.getBoundingClientRect();
-      setPosition({
-        left: Math.max(8, Math.min(parsed.left, window.innerWidth - (bounds?.width ?? 140) - 8)),
-        top: Math.max(8, Math.min(parsed.top, window.innerHeight - (bounds?.height ?? 48) - 8)),
-      });
-    } catch {
-      // Ignore unavailable or malformed saved positioning and use the default corner.
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!position) return;
-    try {
-      localStorage.setItem("lumalab-assistant-position", JSON.stringify(position));
-    } catch {
-      // Moving the chat still works when browser storage is unavailable.
-    }
-    window.dispatchEvent(new CustomEvent(positionEvent, { detail: position }));
-  }, [position]);
-
-  useEffect(() => {
-    const syncPosition = (event: Event) => {
-      if (!(event instanceof CustomEvent)) return;
-      const value: unknown = event.detail;
-      if (
-        typeof value !== "object" ||
-        value === null ||
-        !("left" in value) ||
-        !("top" in value) ||
-        typeof value.left !== "number" ||
-        typeof value.top !== "number"
-      )
-        return;
-      const { left, top } = value;
-      setPosition((current) => {
-        if (current && current.left === left && current.top === top) return current;
-        const bounds = launcherRef.current?.getBoundingClientRect();
-        return {
-          left: Math.max(8, Math.min(left, window.innerWidth - (bounds?.width ?? 140) - 8)),
-          top: Math.max(8, Math.min(top, window.innerHeight - (bounds?.height ?? 48) - 8)),
-        };
-      });
-    };
-    window.addEventListener(positionEvent, syncPosition);
-    return () => window.removeEventListener(positionEvent, syncPosition);
-  }, []);
-
-  useEffect(() => {
-    const move = (event: globalThis.PointerEvent) => {
-      const drag = dragRef.current;
-      if (!drag || event.pointerId !== drag.pointerId) return;
-      const deltaX = event.clientX - drag.startX;
-      const deltaY = event.clientY - drag.startY;
-      if (Math.abs(deltaX) > 5 || Math.abs(deltaY) > 5) draggedRef.current = true;
-      if (!draggedRef.current) return;
-      const bounds = launcherRef.current?.getBoundingClientRect();
-      setPosition({
-        left: Math.max(
-          8,
-          Math.min(drag.left + deltaX, window.innerWidth - (bounds?.width ?? 56) - 8),
-        ),
-        top: Math.max(
-          8,
-          Math.min(drag.top + deltaY, window.innerHeight - (bounds?.height ?? 56) - 8),
-        ),
-      });
-    };
-    const stop = (event: globalThis.PointerEvent) => {
-      if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
-    window.addEventListener("pointercancel", stop);
-    return () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
-      window.removeEventListener("pointercancel", stop);
-    };
-  }, []);
-
-  const beginDrag = (event: PointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0) return;
-    const bounds = launcherRef.current?.getBoundingClientRect();
-    if (!bounds) return;
-    draggedRef.current = false;
-    dragRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      left: bounds.left,
-      top: bounds.top,
-    };
+    if (open) document.getElementById(`${id}-question`)?.focus();
+  }, [open, id]);
+  const close = () => {
+    setOpen(false);
+    launcherRef.current?.focus();
   };
 
   const run = async (action: "result" | "sequence" | "next") => {
@@ -218,69 +105,50 @@ export function LearningAssistant({
     if (!busy && question.trim()) void run("result");
   };
 
-  const viewportWidth = typeof window === "undefined" ? 1280 : window.innerWidth;
-  const viewportHeight = typeof window === "undefined" ? 800 : window.innerHeight;
-  const launcherBounds = launcherRef.current?.getBoundingClientRect();
-  const widgetLeft = position?.left ?? launcherBounds?.left ?? viewportWidth - 156;
-  const widgetTop = position?.top ?? launcherBounds?.top ?? viewportHeight - 78;
-  const panelWidth = Math.min(360, viewportWidth - 24);
-  const panelOpensBelow = widgetTop < viewportHeight / 2;
-  const panelStyle = {
-    left: widgetLeft + 148 + panelWidth > viewportWidth - 8 ? "auto" : 0,
-    right: widgetLeft + 148 + panelWidth > viewportWidth - 8 ? 0 : "auto",
-    top: panelOpensBelow ? "calc(100% + 12px)" : "auto",
-    bottom: panelOpensBelow ? "auto" : "calc(100% + 12px)",
-    maxHeight: panelOpensBelow
-      ? Math.max(160, viewportHeight - widgetTop - 72)
-      : Math.max(160, widgetTop - 24),
-  };
-
   return (
-    <section
-      className={`assistant-widget${open ? " is-open" : ""}`}
-      aria-label="Luma AI chat"
-      style={
-        position
-          ? { left: position.left, top: position.top, right: "auto", bottom: "auto" }
-          : undefined
-      }
-    >
+    <section className={`assistant-widget${open ? " is-open" : ""}`} aria-label="Luma AI chat">
       <button
         ref={launcherRef}
         className="assistant-toggle"
         type="button"
-        aria-label="Luma AI — AI Learning Assistant. Drag to move"
+        aria-label={open ? "Close LUMA AI" : "Open LUMA AI"}
         aria-expanded={open}
         aria-controls={id}
-        title="Drag to move · Click to chat"
-        onPointerDown={beginDrag}
-        onClick={() => {
-          if (draggedRef.current) {
-            draggedRef.current = false;
-            return;
-          }
-          setOpen((value) => !value);
-        }}
+        aria-haspopup="dialog"
+        title={open ? "Close LUMA AI" : "Open LUMA AI"}
+        data-light-surface
+        onClick={() => (open ? close() : setOpen(true))}
       >
-        <Sparkles size={18} aria-hidden="true" />
-        <span>Luma AI</span>
-        <MessageCircle className="assistant-chat-indicator" size={14} aria-hidden="true" />
+        <Sparkles size={21} aria-hidden="true" />
+        <span>LUMA AI</span>
       </button>
       {open && (
-        <div id={id} className="assistant-chat" style={panelStyle}>
+        <div
+          id={id}
+          className="assistant-chat"
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby={`${id}-title`}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              close();
+            }
+          }}
+        >
           <header className="assistant-chat-header">
             <span className="assistant-avatar">
               <Sparkles size={16} aria-hidden="true" />
             </span>
             <div>
-              <strong>Luma AI</strong>
+              <strong id={`${id}-title`}>LUMA AI</strong>
               <span>Image learning assistant</span>
             </div>
             <button
               className="assistant-close"
               type="button"
               aria-label="Close Luma AI chat"
-              onClick={() => setOpen(false)}
+              onClick={close}
             >
               <X size={17} />
             </button>

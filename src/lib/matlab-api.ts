@@ -67,14 +67,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     response = await fetch(`/api/matlab/${path}`, init);
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
-    throw new Error("Cannot reach the MATLAB bridge. Start npm run dev:full, then retry.");
+    throw new Error(
+      "Cannot reach the processing service. Retry shortly; locally, start npm run dev:full.",
+    );
   }
   let data;
   try {
     data = await response.json();
   } catch {
     throw new Error(
-      "MATLAB bridge is unavailable. Start npm run dev:full and check the backend terminal.",
+      "The processing service is unavailable. Retry shortly or ask the application owner to check server configuration.",
     );
   }
   if (!response.ok)

@@ -1,0 +1,19 @@
+# Deploys the web app and AI. MATLAB requires the separate setup in README.md.
+services:
+  - type: web
+    runtime: node
+    name: lumalab
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run build:render
+    startCommand: npm start
+    healthCheckPath: /healthz
+    numInstances: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MATLAB_MODE
+        value: disabled
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b

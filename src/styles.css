@@ -87,7 +87,6 @@
   --launcher-height: 48px;
   --launcher-right: calc(22px + env(safe-area-inset-right, 0px));
   --launcher-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-  --launcher-clearance: calc(80px + env(safe-area-inset-bottom, 0px));
   --active-gradient: linear-gradient(120deg, #ad061414, #ad061407);
 }
 
@@ -1088,19 +1087,6 @@ input[type="range"]::-moz-range-thumb {
   height: 33px;
   font-size: 10px;
   padding: 0 11px;
-}
-.studio-footer {
-  display: flex;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 26px 0 22px;
-  color: var(--muted-foreground);
-  font-size: 9px;
-}
-.studio-footer i {
-  font-style: normal;
-  padding: 0 8px;
-  color: var(--border);
 }
 .studio-alert {
   display: flex;
@@ -2205,13 +2191,6 @@ input[type="range"]::-moz-range-thumb {
     border-top: 1px solid var(--border);
     margin-top: 24px;
     padding-top: 20px;
-  }
-  .studio-footer {
-    font-size: 8px;
-    padding: 23px 0;
-  }
-  .studio-footer > span:last-child {
-    display: none;
   }
   .studio-alert {
     font-size: 11px;
@@ -3340,10 +3319,54 @@ summary:focus-visible {
 
 .assistant-widget {
   position: fixed;
-  z-index: 80;
-  right: 24px;
-  bottom: 24px;
+  z-index: 48;
+  right: var(--launcher-right);
+  bottom: var(--launcher-bottom);
   width: max-content;
+}
+.assistant-safe-area {
+  position: fixed;
+  visibility: hidden;
+  pointer-events: none;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+    env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+.assistant-launcher {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid #ff856799;
+  border-radius: 999px;
+  background: var(--ai-gradient);
+  box-shadow:
+    0 7px 18px #87071338,
+    inset 0 1px 0 #ffffff99;
+}
+.assistant-drag-handle {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  flex-shrink: 0;
+  border-right: 1px solid #ffffff35;
+  border-radius: 999px 0 0 999px;
+  color: var(--primary-foreground);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.assistant-drag-handle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 4px;
+}
+.assistant-widget.is-dragging .assistant-drag-handle {
+  cursor: grabbing;
+  background: #ffffff20;
+}
+.assistant-position-actions {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
 }
 .assistant-toggle {
   display: flex;
@@ -3521,11 +3544,10 @@ summary:focus-visible {
 }
 .assistant-chat-actions {
   display: flex;
+  flex-wrap: wrap;
   flex: 0 0 auto;
   gap: 7px;
   padding: 0 12px 10px;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
 }
 .assistant-chat-actions button {
   flex: 0 0 auto;
@@ -3589,10 +3611,6 @@ summary:focus-visible {
   text-align: center;
 }
 @media (max-width: 600px) {
-  .assistant-widget {
-    right: 14px;
-    bottom: 14px;
-  }
   .assistant-chat {
     max-height: min(560px, calc(100dvh - 24px));
   }
@@ -3611,7 +3629,6 @@ summary:focus-visible {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding-bottom: var(--launcher-clearance);
   background:
     radial-gradient(ellipse at 8% 92%, #e9975633, transparent 43%),
     radial-gradient(ellipse at 92% 5%, #ffffffb3, transparent 45%), var(--workspace-gradient);
@@ -4137,10 +4154,10 @@ summary:focus-visible {
   max-width: 100px;
 }
 .sequence-timeline .timeline-placeholder {
-  flex: 1;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 12px;
   min-width: 160px;
   text-align: left;
@@ -4182,30 +4199,16 @@ summary:focus-visible {
   background: #fffcf8;
   border-radius: 10px;
 }
-.studio-footer {
-  padding: 18px 0 6px;
-  margin: 0;
-  font-size: 10px;
-  color: var(--muted-foreground);
-}
-.assistant-widget {
-  z-index: 48;
-  right: var(--launcher-right);
-  bottom: var(--launcher-bottom);
-}
 .assistant-toggle {
   height: var(--launcher-height);
   min-height: var(--launcher-height);
-  padding: 0 20px;
+  padding: 0 16px;
   gap: 9px;
   background: var(--ai-gradient);
   color: var(--primary-foreground);
-  border-color: #ff856799;
-  border-radius: 999px;
-  box-shadow:
-    0 7px 18px #87071338,
-    inset 0 1px 0 #ffffff99,
-    inset 0 -2px 0 #52082f50;
+  border: 0;
+  border-radius: 0 999px 999px 0;
+  box-shadow: none;
   cursor: pointer;
   touch-action: manipulation;
   transition:
@@ -4426,7 +4429,6 @@ summary:focus-visible {
     --launcher-height: 46px;
     --launcher-right: calc(14px + env(safe-area-inset-right, 0px));
     --launcher-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
-    --launcher-clearance: calc(74px + env(safe-area-inset-bottom, 0px));
   }
   .studio-header {
     display: grid;
@@ -4527,10 +4529,6 @@ summary:focus-visible {
   .is-empty .comparison-stage {
     min-height: 310px;
   }
-  .studio-footer {
-    flex-direction: column;
-    gap: 7px;
-  }
 }
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
   .assistant-toggle:hover:not(:disabled),
@@ -4601,7 +4599,7 @@ summary:focus-visible {
 .experiment-compare-grid {
   display: grid;
   gap: 12px;
-  align-items: stretch;
+  align-items: start;
 }
 .experiment-card {
   border: 2px solid var(--border);
@@ -4644,6 +4642,15 @@ summary:focus-visible {
   border-radius: 12px;
   font-size: 13px;
   background: var(--background);
+}
+.experiment-slot {
+  display: grid;
+  gap: 12px;
+  align-content: center;
+  justify-items: start;
+}
+.experiment-slot p {
+  margin: 0;
 }
 .experiment-original {
   padding: 10px;
@@ -4745,8 +4752,22 @@ summary:focus-visible {
   gap: 3px;
   font-size: 11px;
 }
+.region-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  flex: 0 1 342px;
+  min-width: 0;
+}
+.region-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .region-editor input {
-  width: 78px;
+  width: 100%;
+  min-width: 0;
+  height: 38px;
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -4803,6 +4824,10 @@ summary:focus-visible {
   margin: 8px 0;
 }
 @media (max-width: 700px) {
+  .region-fields {
+    flex-basis: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .experiment-compare-grid {
     grid-template-columns: 1fr !important;
   }

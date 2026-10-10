@@ -8,9 +8,12 @@ surfaces and subtle lighting support contextual adjustments and actual image
 histograms/statistics. Intensity transformations change tones; spatial filters
 use neighboring pixels to smooth noise, sharpen detail, or reveal edges.
 
-The fixed lower-right **LUMA AI** button opens the Groq-backed learning assistant.
-The workspace reserves safe-area-aware clearance for the launcher and stacks its
-panels on smaller screens. Pointer lighting affects only surface materials and
+The floating **LUMA AI** button opens the Groq-backed learning assistant. Drag its
+grip with a mouse or touch, or focus the grip and use arrow keys (Shift for larger
+steps). Placement persists across workspaces and refreshes, stays inside the safe
+viewport, and yields to nearby controls. Use **Reset position** in the assistant
+panel to return to the default corner. The workspace has no footer or reserved
+launcher band and stacks its panels on smaller screens. Pointer lighting affects only surface materials and
 frame edges, stays static on touch screens, and respects reduced motion. Histogram
 bars use actual luminance counts; preset curves illustrate the existing settings,
 and sequence thumbnails show only the real input and completed output.
@@ -514,7 +517,6 @@ source, then ran that accepted noisy sequence through real MATLAB. Both final PN
 downloads matched the returned bytes. Request counts proved no processing before
 Run sequence. Reset noise blocked the old binding, clean comparison remained
 available, and layouts at 320/390/768/1280 pixels had no horizontal overflow.
-
 
 ## Compare, history, and regions
 

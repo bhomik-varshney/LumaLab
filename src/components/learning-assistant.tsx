@@ -1,4 +1,4 @@
-import { Send, Sparkles, X } from "lucide-react";
+import { GripVertical, Send, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState, useId, type FormEvent } from "react";
 import { explainLearning } from "@/lib/learning-context";
 import { AiMarkdown } from "./ai-markdown";
@@ -6,6 +6,7 @@ import { plainExplanation } from "@/lib/markdown-text";
 import { RecommendationReview } from "./recommendation-review";
 import type { SequenceRecommendation, LearningContext } from "@/lib/learning-context";
 import { describeOperation } from "@/lib/enhancement-methods";
+import { useFloatingAssistant } from "@/hooks/use-floating-assistant";
 
 export function LearningAssistant({
   context,
@@ -23,6 +24,7 @@ export function LearningAssistant({
   onAccept?: (recommendation: SequenceRecommendation, mode: "append" | "replace") => string | null;
 }) {
   const [open, setOpen] = useState(false);
+  const floating = useFloatingAssistant(open);
   const [question, setQuestion] = useState("");
   const [askedQuestion, setAskedQuestion] = useState("");
   const [busy, setBusy] = useState(false);
@@ -106,24 +108,48 @@ export function LearningAssistant({
   };
 
   return (
-    <section className={`assistant-widget${open ? " is-open" : ""}`} aria-label="Luma AI chat">
-      <button
-        ref={launcherRef}
-        className="assistant-toggle"
-        type="button"
-        aria-label={open ? "Close LUMA AI" : "Open LUMA AI"}
-        aria-expanded={open}
-        aria-controls={id}
-        aria-haspopup="dialog"
-        title={open ? "Close LUMA AI" : "Open LUMA AI"}
-        data-light-surface
-        onClick={() => (open ? close() : setOpen(true))}
-      >
-        <Sparkles size={21} aria-hidden="true" />
-        <span>LUMA AI</span>
-      </button>
+    <section
+      ref={floating.widgetRef}
+      style={floating.widgetStyle}
+      className={`assistant-widget${open ? " is-open" : ""}${floating.dragging ? " is-dragging" : ""}`}
+      aria-label="Luma AI chat"
+    >
+      <span ref={floating.safeAreaRef} className="assistant-safe-area" aria-hidden="true" />
+      <div className="assistant-launcher">
+        <button
+          type="button"
+          className="assistant-drag-handle"
+          aria-label="Move LUMA AI"
+          aria-describedby={`${id}-move-help`}
+          title="Drag to move; use arrow keys to reposition"
+          {...floating.handleProps}
+        >
+          <GripVertical size={17} aria-hidden="true" />
+        </button>
+        <span id={`${id}-move-help`} className="sr-only">
+          Drag this handle or use arrow keys to move LUMA AI. Hold Shift for larger steps. Reset
+          position is available in the assistant panel.
+        </span>
+        <button
+          ref={launcherRef}
+          className="assistant-toggle"
+          type="button"
+          aria-label={open ? "Close LUMA AI" : "Open LUMA AI"}
+          aria-expanded={open}
+          aria-controls={id}
+          aria-haspopup="dialog"
+          title={open ? "Close LUMA AI" : "Open LUMA AI"}
+          data-light-surface
+          onClick={() => (open ? close() : setOpen(true))}
+        >
+          <Sparkles size={21} aria-hidden="true" />
+          <span>LUMA AI</span>
+        </button>
+      </div>
       {open && (
         <div
+          ref={floating.panelRef}
+          style={floating.panelStyle}
           id={id}
           className="assistant-chat"
           role="dialog"
@@ -153,6 +179,11 @@ export function LearningAssistant({
               <X size={17} />
             </button>
           </header>
+          <div className="assistant-position-actions">
+            <button type="button" className="text-button" onClick={floating.reset}>
+              Reset position
+            </button>
+          </div>
           <div className="assistant-chat-messages" aria-live="polite">
             <p className="assistant-disclaimer">
               Ask about your current settings or results. Images stay on your device; only

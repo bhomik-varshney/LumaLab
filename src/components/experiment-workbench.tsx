@@ -302,11 +302,14 @@ export function ExperimentWorkbench({
                       </article>
                     ))}
                     {comparisons.length < capacity && (
-                      <div className="experiment-empty">
-                        {comparisons.length === 1 ? "Result B" : "Next result"}
+                      <div className="experiment-empty experiment-slot">
+                        <strong>{comparisons.length === 1 ? "Result B" : "Next result"}</strong>
                         <p>
                           Close this panel, choose another setting, then add the completed result.
                         </p>
+                        <button className="studio-button secondary" onClick={() => onTab(null)}>
+                          Choose another setting
+                        </button>
                       </div>
                     )}
                   </div>

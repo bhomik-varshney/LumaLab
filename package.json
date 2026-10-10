@@ -3,10 +3,18 @@
   "private": true,
   "sideEffects": false,
   "type": "module",
+  "engines": {
+    "node": "^22.13.0 || ^24.0.0"
+  },
   "scripts": {
     "dev": "vite dev",
     "backend": "node bridge/server.mjs",
     "dev:full": "node scripts/dev.mjs",
+    "start": "node scripts/production.mjs",
+    "build:render": "node scripts/build-render.mjs",
+    "typecheck": "tsc --noEmit",
+    "test:production": "node scripts/test-production.mjs",
+    "check:secrets": "node scripts/check-secrets.mjs",
     "test:matlab": "node scripts/test-matlab.mjs",
     "test:roi-api": "node scripts/test-roi-api.mjs",
     "test:noise-api": "node scripts/test-noise-api.mjs",

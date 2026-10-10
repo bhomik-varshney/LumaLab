@@ -185,51 +185,59 @@ export function RegionSelector({
             {" "}
             {drawing ? "Finish drawing" : "Draw / move region"}
           </button>
-          {(["x", "y", "width", "height"] as const).map((key) => (
-            <label key={key}>
-              Region {key}
-              <input
-                type="number"
-                min={key === "x" || key === "y" ? 0 : 8}
-                max={key === "x" || key === "width" ? width : height}
-                step={1}
-                disabled={disabled}
-                value={draft?.[key] ?? ""}
-                onChange={(event) =>
-                  setDraft({
-                    ...(draft ?? {
-                      x: 0,
-                      y: 0,
-                      width: Math.min(64, width),
-                      height: Math.min(64, height),
-                    }),
-                    [key]: Number(event.target.value),
-                  })
-                }
-              />
-            </label>
-          ))}
-          <button className="studio-button primary" disabled={disabled || !draft} onClick={confirm}>
-            Apply to region
-          </button>
-          <button
-            className="studio-button secondary"
-            disabled={!draft || disabled}
-            onClick={() => draft && onFit(clampRegion(draft, width, height))}
-          >
-            Fit region
-          </button>
-          <button
-            className="studio-button secondary"
-            disabled={disabled || (!draft && !region)}
-            onClick={() => {
-              setDraft(null);
-              setDrawing(false);
-              onClear();
-            }}
-          >
-            Clear region
-          </button>
+          <div className="region-fields">
+            {(["x", "y", "width", "height"] as const).map((key) => (
+              <label key={key}>
+                Region {key}
+                <input
+                  type="number"
+                  min={key === "x" || key === "y" ? 0 : 8}
+                  max={key === "x" || key === "width" ? width : height}
+                  step={1}
+                  disabled={disabled}
+                  value={draft?.[key] ?? ""}
+                  onChange={(event) =>
+                    setDraft({
+                      ...(draft ?? {
+                        x: 0,
+                        y: 0,
+                        width: Math.min(64, width),
+                        height: Math.min(64, height),
+                      }),
+                      [key]: Number(event.target.value),
+                    })
+                  }
+                />
+              </label>
+            ))}
+          </div>
+          <div className="region-actions">
+            <button
+              className="studio-button primary"
+              disabled={disabled || !draft}
+              onClick={confirm}
+            >
+              Apply to region
+            </button>
+            <button
+              className="studio-button secondary"
+              disabled={!draft || disabled}
+              onClick={() => draft && onFit(clampRegion(draft, width, height))}
+            >
+              Fit region
+            </button>
+            <button
+              className="studio-button secondary"
+              disabled={disabled || (!draft && !region)}
+              onClick={() => {
+                setDraft(null);
+                setDrawing(false);
+                onClear();
+              }}
+            >
+              Clear region
+            </button>
+          </div>
           {error && <p role="alert">{error}</p>}
           <small>
             Neighborhood filters read surrounding pixels. Only the selected rectangle changes.

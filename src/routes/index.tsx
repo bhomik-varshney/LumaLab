@@ -991,6 +991,14 @@ function LumaLab() {
               </p>
             </div>
           </div>
+          <div className="experiment-entry">
+            <button className="studio-button secondary" onClick={() => setExperimentTab("compare")}>
+              Compare results
+            </button>
+            <button className="studio-button secondary" onClick={() => setExperimentTab("history")}>
+              History <span>{history.length}</span>
+            </button>
+          </div>
           {noiseOpened && (
             <div hidden={workspaceMode !== "noise"}>
               <NoisePlayground
@@ -1008,14 +1016,6 @@ function LumaLab() {
               />
             </div>
           )}
-          <div className="experiment-entry">
-            <button className="studio-button secondary" onClick={() => setExperimentTab("compare")}>
-              Compare results
-            </button>
-            <button className="studio-button secondary" onClick={() => setExperimentTab("history")}>
-              History <span>{history.length}</span>
-            </button>
-          </div>
           <ExperimentWorkbench
             tab={experimentTab}
             onTab={setExperimentTab}
@@ -2066,12 +2066,6 @@ function LumaLab() {
               }}
             />
           </div>
-          <footer className="studio-footer">
-            <span>
-              LumaLab <i>/</i> Image processing, made visible.
-            </span>
-            <span>Full-resolution MATLAB processing</span>
-          </footer>
         </div>
       </div>
     </main>

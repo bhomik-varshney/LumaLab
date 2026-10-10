@@ -5,21 +5,33 @@ import { mkdtemp, readFile, writeFile, rename, rm, readdir, access } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { loadEnvFile } from "node:process";
 import { explainLearning } from "./learning-assistant.mjs";
 import { noiseOptions } from "./noise.mjs";
 import { validateRegion } from "../shared/region.mjs";
 import { processingOptions, sequenceOptions } from "./processing.mjs";
+import { remoteProcessor } from "./remote-processor.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const production = process.env.NODE_ENV === "production";
 try {
-  loadEnvFile(join(root, "bridge", ".env"));
+  if (!production) loadEnvFile(join(root, "bridge", ".env"));
 } catch (error) {
   if (error.code !== "ENOENT") throw new Error("Cannot read bridge/.env. Check its format.");
 }
 const workDir = await mkdtemp(join(tmpdir(), "lumalab-"));
 const port = Number(process.env.MATLAB_BRIDGE_PORT || 3001);
+const host = process.env.MATLAB_BRIDGE_HOST || "127.0.0.1";
+const mode = process.env.MATLAB_MODE || (production ? "disabled" : "local");
+if (!["local", "disabled", "remote"].includes(mode))
+  throw new Error("Use MATLAB_MODE=local, disabled, or remote.");
+const apiToken = process.env.MATLAB_API_TOKEN?.trim();
+if (host !== "127.0.0.1" && (!apiToken || apiToken.length < 32))
+  throw new Error(
+    "A non-loopback MATLAB bridge requires MATLAB_API_TOKEN of at least 32 characters and an HTTPS reverse proxy.",
+  );
+const remote = mode === "remote" ? remoteProcessor() : null;
 const maxBytes = 10 * 1024 * 1024;
 const images = new Map();
 const runs = new Map();
@@ -27,7 +39,10 @@ const activeImages = new Map();
 const sequenceImages = new Set();
 let worker;
 let status = "offline";
-let detail = "Starting MATLAB…";
+let detail =
+  mode === "disabled"
+    ? "MATLAB processing is unavailable on this deployment. The application owner must connect a licensed MATLAB service; no enhancement output has been produced."
+    : "Starting MATLAB…";
 let version;
 let toolbox = false;
 let workerOperations = [];
@@ -37,6 +52,19 @@ let closing = false;
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
 const quoteMatlab = (value) => `'${value.replaceAll("'", "''")}'`;
 const fail = (message, statusCode = 400) => Object.assign(new Error(message), { statusCode });
+async function refreshRemoteHealth() {
+  try {
+    const health = await remote("/api/matlab/health");
+    status = health.status;
+    detail = health.detail;
+    workerOperations = health.operations;
+  } catch {
+    status = "offline";
+    workerOperations = [];
+    detail =
+      "Cannot reach the remote MATLAB service. The application owner must check its configuration.";
+  }
+}
 
 async function executable() {
   if (process.env.MATLAB_BIN) return process.env.MATLAB_BIN;
@@ -91,12 +119,16 @@ async function startWorker() {
       child.on("error", (error) => {
         if (worker !== child) return;
         status = "offline";
-        detail = `Cannot launch MATLAB: ${error.message}. Check MATLAB_BIN and restart the backend.`;
+        detail = production
+          ? "MATLAB could not start. The application owner must check its installation and license."
+          : `Cannot launch MATLAB: ${error.message}. Check MATLAB_BIN and restart the backend.`;
       });
       child.on("exit", (code) => {
         if (worker !== child || closing) return;
         status = "offline";
-        detail = `MATLAB exited (${code}). Check its activation and the MATLAB error below; restart the backend. ${log.trim()}`;
+        detail = production
+          ? "MATLAB stopped. The application owner must check its installation and license."
+          : `MATLAB exited (${code}). Check its activation and the MATLAB error below; restart the backend. ${log.trim()}`;
         console.error(detail);
       });
       const deadline = Date.now() + 90000;
@@ -126,7 +158,9 @@ async function startWorker() {
       }
     } catch (error) {
       status = "offline";
-      detail = error.message;
+      detail = production
+        ? "MATLAB is unavailable. The application owner must install and license MATLAB on the processing host."
+        : error.message;
     }
   })().finally(() => {
     starting = undefined;
@@ -153,6 +187,8 @@ async function readProgress(run) {
   if (run.finished) return run.progress;
   try {
     const progress = JSON.parse(await readFile(run.progressPath, "utf8"));
+    if (production && progress.error)
+      progress.error = "MATLAB sequence failed. Check the image and saved steps, then retry.";
     if (!run.finished) run.progress = progress;
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
@@ -227,7 +263,13 @@ async function processImage(imageId, options) {
         continue;
       }
       const payload = JSON.parse(raw);
-      if (!payload.ok) throw fail(`MATLAB could not process this image: ${payload.error}`, 422);
+      if (!payload.ok)
+        throw fail(
+          production
+            ? "MATLAB could not process this image. Check its format, dimensions, and settings."
+            : `MATLAB could not process this image: ${payload.error}`,
+          422,
+        );
       const [output, original] = await Promise.all([readFile(outputPath), readFile(originalPath)]);
       let regionUrls = {};
       if (options.roi) {
@@ -313,7 +355,27 @@ const server = createServer(async (request, response) => {
     response.end(JSON.stringify(value));
   };
   try {
+    if (request.method === "GET" && request.url === "/healthz") {
+      send(200, { status: "ready" });
+      return;
+    }
+    if (request.headers.origin) {
+      try {
+        const origin = new URL(request.headers.origin);
+        if (!["http:", "https:"].includes(origin.protocol) || origin.host !== request.headers.host)
+          throw new Error();
+      } catch {
+        throw fail("Cross-origin API requests are not permitted.", 403);
+      }
+    }
+    if (apiToken) {
+      const supplied = Buffer.from(request.headers.authorization || "");
+      const expected = Buffer.from(`Bearer ${apiToken}`);
+      if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected))
+        throw fail("Processing service authorization is required.", 401);
+    }
     if (request.method === "POST" && request.url === "/api/matlab/learning") {
+      if (remote) await refreshRemoteHealth();
       if (request.headers["content-type"] !== "application/json")
         throw fail("Use application/json.", 415);
       let input;
@@ -328,6 +390,7 @@ const server = createServer(async (request, response) => {
         await explainLearning(input, { availableIds: status === "ready" ? workerOperations : [] }),
       );
     } else if (request.method === "GET" && request.url === "/api/matlab/health") {
+      if (remote) await refreshRemoteHealth();
       send(200, {
         status,
         detail,
@@ -341,6 +404,10 @@ const server = createServer(async (request, response) => {
       /^\/api\/matlab\/progress\/[a-f\d-]{36}$/i.test(request.url)
     ) {
       const runId = request.url.split("/").at(-1);
+      if (remote) {
+        send(200, await remote(request.url));
+        return;
+      }
       const run = runs.get(runId);
       if (!run) throw fail("Sequence progress is not available yet or has expired.", 404);
       send(200, { runId, ...(await readProgress(run)), processor: "MATLAB" });
@@ -358,6 +425,10 @@ const server = createServer(async (request, response) => {
       const jpeg = bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
       if (!(type === "image/png" ? png : jpeg))
         throw fail("File contents do not match a valid PNG or JPEG image.", 415);
+      if (remote) {
+        send(200, await remote(request.url, { method: "POST", bytes, type }));
+        return;
+      }
       if (!derivedInput && [...images.values()].filter((image) => !image.derived).length >= 32)
         throw fail(
           "Upload limit reached. Restart the backend or wait for old images to expire.",
@@ -394,6 +465,7 @@ const server = createServer(async (request, response) => {
       }
       if (!input || typeof input.imageId !== "string")
         throw fail("A valid uploaded imageId is required.");
+      if (status !== "ready") throw fail(detail, 503);
       const options =
         input.noise !== undefined
           ? noiseOptions(input)
@@ -405,7 +477,18 @@ const server = createServer(async (request, response) => {
         throw fail(
           "Generate noise on the clean image; select a region when filtering the resulting image.",
         );
-      send(200, await processImage(input.imageId, { ...options, ...(roi ? { roi } : {}) }));
+      if (remote)
+        send(
+          200,
+          await remote(request.url, {
+            method: "POST",
+            type: "application/json",
+            bytes: Buffer.from(
+              JSON.stringify({ imageId: input.imageId, ...options, ...(roi ? { roi } : {}) }),
+            ),
+          }),
+        );
+      else send(200, await processImage(input.imageId, { ...options, ...(roi ? { roi } : {}) }));
     } else send(404, { error: "Unknown API route." });
   } catch (error) {
     send(error.statusCode || 500, {
@@ -413,7 +496,7 @@ const server = createServer(async (request, response) => {
         ? error.message
         : "Bridge failure. Check the backend terminal and retry.",
     });
-    if (!error.statusCode) console.error(error);
+    if (!error.statusCode) console.error(production ? "Bridge request failed." : error);
   }
 });
 
@@ -430,9 +513,13 @@ const expiry = setInterval(() => {
   }
 }, 60000);
 expiry.unref();
-server.listen(port, "127.0.0.1", () => {
-  console.log(`MATLAB bridge: http://127.0.0.1:${port} (local only)`);
-  void startWorker();
+server.requestTimeout = 120000;
+server.headersTimeout = 15000;
+server.keepAliveTimeout = 5000;
+server.listen(port, host, () => {
+  console.log(`MATLAB bridge listening on port ${port} (${mode})`);
+  if (mode === "local") void startWorker();
+  if (remote) void refreshRemoteHealth();
 });
 server.on("error", (error) => {
   console.error(error.message);

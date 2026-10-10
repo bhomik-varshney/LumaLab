@@ -3,6 +3,7 @@ import type { ComponentType } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProcessingResult } from "@/lib/matlab-api";
 import {
+  continueImage,
   checkMatlab,
   enhanceImage,
   uploadImage,
@@ -12,6 +13,7 @@ import {
 import { Route } from "@/routes/index";
 
 vi.mock("@/lib/matlab-api", () => ({
+  continueImage: vi.fn(),
   checkMatlab: vi.fn(),
   uploadImage: vi.fn(),
   enhanceImage: vi.fn(),
@@ -37,6 +39,12 @@ const original: ProcessingResult = {
 };
 
 beforeEach(() => {
+  vi.mocked(continueImage).mockResolvedValue({
+    ...original,
+    imageId: "continued-image",
+    url: "data:image/png;base64,ZW5oYW5jZWQ=",
+    originalUrl: "data:image/png;base64,ZW5oYW5jZWQ=",
+  });
   vi.mocked(checkSequenceProgress).mockResolvedValue({
     state: "processing",
     step: 2,
@@ -44,8 +52,10 @@ beforeEach(() => {
     completedSteps: 1,
     method: "median",
   });
-  vi.mocked(runSequence).mockImplementation(async (_id, steps, runId) => ({
+  vi.mocked(runSequence).mockImplementation(async (_id, steps, runId, _signal, roi) => ({
     ...original,
+    imageId: _id,
+    ...(roi ? { roi } : {}),
     category: "sequence",
     method: "sequence",
     parameters: {},
@@ -57,6 +67,7 @@ beforeEach(() => {
   vi.mocked(uploadImage).mockResolvedValue(original);
   vi.mocked(enhanceImage).mockImplementation(async (_id, options) => ({
     ...original,
+    imageId: _id,
     ...options,
     gamma: options.parameters.gamma ?? 1,
     lowCutoff: options.parameters.lowCutoff ?? 0.1,
@@ -477,4 +488,219 @@ it("a rejected AI recommendation leaves the manual sequence available and never 
   fireEvent.click(screen.getByRole("button", { name: "Run sequence" }));
   await waitFor(() => expect(runSequence).toHaveBeenCalledOnce());
   await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+});
+
+describe("integrated experiment workspace", () => {
+  it("retains independent comparison snapshots and restores without processing or replacing original", async () => {
+    render(<LumaLab />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Brighten" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Compare results" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add current result" }));
+    expect(screen.getByAltText(/Result A:/)).toHaveAttribute(
+      "src",
+      "data:image/png;base64,ZW5oYW5jZWQ=",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Compare results" })).toHaveFocus(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Darken" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Compare results" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add current result" }));
+    expect(screen.getByAltText(/Result A:/).closest("button")).toHaveTextContent("0.6");
+    expect(screen.getByAltText(/Result B:/).closest("button")).toHaveTextContent("1.8");
+    const calls = vi.mocked(enhanceImage).mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Use as active output" }));
+    expect(screen.getByText(/Restored:/)).toBeInTheDocument();
+    expect(enhanceImage).toHaveBeenCalledTimes(calls);
+    expect(screen.getByAltText("Original image preview")).toHaveAttribute(
+      "src",
+      original.originalUrl,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /History/ }));
+    expect(screen.getByText(/Session only/)).toBeInTheDocument();
+    expect(document.querySelectorAll(".experiment-history-row")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Clear history" }));
+    expect(document.querySelectorAll(".experiment-history-row")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm clear history" }));
+    expect(screen.getByText(/No completed experiments/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "A/B/C Compare" }));
+    expect(screen.getByAltText(/Result A:/)).toBeInTheDocument();
+    expect(screen.getByAltText(/Result B:/)).toBeInTheDocument();
+  });
+  it("continues from exact output through a new input and can return to the original", async () => {
+    render(<LumaLab />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Brighten" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Compare results" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add current result" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue from result" }));
+    await waitFor(() => expect(continueImage).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByText(/Processing input:/)).toBeInTheDocument());
+    expect(fetch).toHaveBeenCalledWith(
+      "data:image/png;base64,ZW5oYW5jZWQ=",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(screen.getByAltText("Original image preview")).toHaveAttribute(
+      "src",
+      "data:image/png;base64,ZW5oYW5jZWQ=",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Darken" }));
+    await waitFor(() =>
+      expect(enhanceImage).toHaveBeenLastCalledWith(
+        "continued-image",
+        expect.objectContaining({ parameters: { gamma: 1.8 } }),
+        expect.any(AbortSignal),
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Return to original upload" }));
+    await waitFor(() =>
+      expect(screen.getByAltText("Original image preview")).toHaveAttribute(
+        "src",
+        original.originalUrl,
+      ),
+    );
+  });
+  it("records only completed runs; failed requests cannot create history", async () => {
+    vi.mocked(enhanceImage).mockRejectedValueOnce(new Error("MATLAB failed"));
+    render(<LumaLab />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Brighten" }));
+    await screen.findByText("MATLAB failed");
+    fireEvent.click(screen.getByRole("button", { name: /History/ }));
+    expect(screen.getByText(/No completed experiments/)).toBeInTheDocument();
+  });
+});
+
+it("passes a validated pixel rectangle to both real processing boundaries and preserves sequence snapshots", async () => {
+  const input = {
+    ...original,
+    original: { ...original.original, width: 21, height: 21 },
+    enhanced: { ...original.enhanced, width: 21, height: 21 },
+  };
+  vi.mocked(uploadImage).mockResolvedValue(input);
+  vi.mocked(enhanceImage).mockImplementation(async (_id, options, _signal, roi) => ({
+    ...input,
+    ...options,
+    ...(roi ? { roi } : {}),
+    url: "data:image/png;base64,cmVnaW9u",
+  }));
+  render(<LumaLab />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Select region" }));
+  for (const [label, value] of [
+    ["Region x", "0"],
+    ["Region y", "3"],
+    ["Region width", "7"],
+    ["Region height", "10"],
+  ])
+    fireEvent.change(screen.getByLabelText(label!), { target: { value } });
+  fireEvent.click(screen.getByRole("button", { name: "Apply to region" }));
+  expect(screen.getByText(/Use whole pixels/)).toBeInTheDocument();
+  expect(enhanceImage).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText("Region width"), { target: { value: "8" } });
+  fireEvent.click(screen.getByRole("button", { name: "Apply to region" }));
+  const roi = { x: 0, y: 3, width: 8, height: 10 };
+  await waitFor(() =>
+    expect(enhanceImage).toHaveBeenCalledWith(
+      "test-image",
+      expect.any(Object),
+      expect.any(AbortSignal),
+      roi,
+    ),
+  );
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+  fireEvent.click(screen.getAllByRole("button", { name: "Add step" })[0]!);
+  fireEvent.click(screen.getByRole("button", { name: "Run sequence" }));
+  await waitFor(() =>
+    expect(runSequence).toHaveBeenCalledWith(
+      "test-image",
+      [{ category: "intensity", method: "gamma", parameters: { gamma: 1 } }],
+      expect.any(String),
+      expect.any(AbortSignal),
+      roi,
+    ),
+  );
+});
+
+it("keeps old history images recoverable across a replacement upload", async () => {
+  render(<LumaLab />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Brighten" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+  vi.mocked(uploadImage).mockResolvedValue({
+    ...original,
+    imageId: "new-upload",
+    url: "data:image/png;base64,bmV3",
+    originalUrl: "data:image/png;base64,bmV3",
+  });
+  fireEvent.change(screen.getByLabelText("Upload image file"), {
+    target: { files: [new File(["new"], "new.png", { type: "image/png" })] },
+  });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: /History/ }));
+  fireEvent.click(document.querySelector<HTMLButtonElement>(".experiment-history-row>button")!);
+  expect(screen.getByAltText("History result preview")).toHaveAttribute(
+    "src",
+    "data:image/png;base64,ZW5oYW5jZWQ=",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Use as active output" }));
+  expect(screen.getByAltText("Enhanced image preview")).toHaveAttribute(
+    "src",
+    "data:image/png;base64,ZW5oYW5jZWQ=",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Return to original upload" }));
+  await waitFor(() =>
+    expect(screen.getByAltText("Original image preview")).toHaveAttribute(
+      "src",
+      "data:image/png;base64,bmV3",
+    ),
+  );
+});
+
+it("restores and continues a retained output even after the original upload is removed", async () => {
+  render(<LumaLab />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Brighten" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Remove image" }));
+  expect(screen.getByText("Your next experiment starts here.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /History/ }));
+  fireEvent.click(document.querySelector<HTMLButtonElement>(".experiment-history-row>button")!);
+  fireEvent.click(screen.getByRole("button", { name: "Use as active output" }));
+  expect(screen.getByAltText("Enhanced image preview")).toHaveAttribute(
+    "src",
+    "data:image/png;base64,ZW5oYW5jZWQ=",
+  );
+  expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: /History/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue from result" }));
+  await waitFor(() => expect(screen.getByText(/Processing input:/)).toBeInTheDocument());
+  expect(screen.getByAltText("Original image preview")).toHaveAttribute(
+    "src",
+    "data:image/png;base64,ZW5oYW5jZWQ=",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Darken" }));
+  await waitFor(() =>
+    expect(enhanceImage).toHaveBeenLastCalledWith(
+      "continued-image",
+      expect.objectContaining({ parameters: { gamma: 1.8 } }),
+      expect.any(AbortSignal),
+    ),
+  );
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save image" })).toBeEnabled());
+  fireEvent.click(screen.getAllByRole("button", { name: "Add step" })[0]!);
+  fireEvent.click(screen.getByRole("button", { name: "Run sequence" }));
+  await waitFor(() =>
+    expect(runSequence).toHaveBeenCalledWith(
+      "continued-image",
+      expect.any(Array),
+      expect.any(String),
+      expect.any(AbortSignal),
+    ),
+  );
 });

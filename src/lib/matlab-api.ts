@@ -1,3 +1,4 @@
+export type Region = { x: number; y: number; width: number; height: number };
 export type Category = "intensity" | "spatial";
 export type Method =
   "gamma" | "equalize" | "stretch" | "mean" | "gaussian" | "median" | "unsharp" | "sobel";
@@ -29,7 +30,15 @@ export type ProcessingResult = {
   category: Category | "sequence" | "noise";
   method: Method | "sequence" | "noise";
   parameters: Parameters;
-  outputKind: "enhanced" | "edge-map";
+  outputKind: "enhanced" | "edge-map" | "roi-composite";
+  roi?: Region;
+  roiUrl?: string;
+  roiOriginalUrl?: string;
+  roiAnalysis?: {
+    original: ImageInfo;
+    enhanced: ImageInfo;
+    histograms: { original: number[]; enhanced: number[] };
+  };
   gamma: number;
   lowCutoff: number;
   highCutoff: number;
@@ -81,11 +90,16 @@ export const uploadImage = (image: Blob, signal: AbortSignal) =>
     body: image,
     signal,
   });
-export const enhanceImage = (imageId: string, options: ProcessingOptions, signal: AbortSignal) =>
+export const enhanceImage = (
+  imageId: string,
+  options: ProcessingOptions,
+  signal: AbortSignal,
+  roi?: Region | null,
+) =>
   request<ProcessingResult>("process", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ imageId, ...options }),
+    body: JSON.stringify({ imageId, ...options, ...(roi ? { roi } : {}) }),
     signal,
   });
 export const runSequence = (
@@ -93,11 +107,12 @@ export const runSequence = (
   steps: ProcessingOptions[],
   runId: string,
   signal: AbortSignal,
+  roi?: Region | null,
 ) =>
   request<ProcessingResult>("process", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ imageId, steps, runId }),
+    body: JSON.stringify({ imageId, steps, runId, ...(roi ? { roi } : {}) }),
     signal,
   });
 export const checkSequenceProgress = (runId: string, signal: AbortSignal) =>
@@ -111,5 +126,15 @@ export const addNoise = (imageId: string, noise: NoiseSettings, signal: AbortSig
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ imageId, noise }),
+    signal,
+  });
+
+// Re-register a completed PNG independently of the original upload. MATLAB
+// validates decoded dimensions; the bridge bounds these temporary inputs.
+export const continueImage = (image: Blob, signal: AbortSignal) =>
+  request<ProcessingResult>("inputs", {
+    method: "POST",
+    headers: { "Content-Type": "image/png" },
+    body: image,
     signal,
   });

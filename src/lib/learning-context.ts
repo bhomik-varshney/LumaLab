@@ -1,9 +1,11 @@
-import type { ImageInfo, NoiseSettings, ProcessingOptions } from "./matlab-api";
+import type { Region, ImageInfo, NoiseSettings, ProcessingOptions } from "./matlab-api";
 export type Measurement = ImageInfo & {
   histogram: { pixels: number; darkPixels: number; brightPixels: number };
 };
 export type LearningContext = {
   mode: "studio" | "noise";
+  roi?: Region | null;
+  inputStage?: "uploaded" | "continued" | "restored";
   workflow?: "single" | "sequence";
   sequenceInput?: "original" | "noisy";
   resultInput?: "original" | "noisy";

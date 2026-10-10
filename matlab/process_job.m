@@ -9,6 +9,11 @@ if ~isempty(map)
 end
 outputKind = 'enhanced';
 completed = {};
+roi = [];
+if isfield(job,'roi'), roi = job.roi; end
+if ~isempty(roi) && isfield(job,'noise')
+    error('LumaLab:Region','Generate noise on the clean image before selecting a region for filtering.');
+end
 if isfield(job,'noise')
     [output, noise] = add_image_noise(input, job.noise);
     operation = struct('category','noise','method','noise','parameters',struct(), ...
@@ -29,7 +34,7 @@ elseif isfield(job,'steps')
             'method',name,'completedSteps',index-1);
         write_job_progress(job,progress);
         try
-            [output, operation] = apply_operation(output,step);
+            [output, operation] = apply_region_operation(output,step,roi);
             [info,~] = image_analysis(output);
             completed{index} = struct('category',operation.category,'method',operation.method, ...
                 'parameters',operation.parameters,'output',info);
@@ -46,9 +51,10 @@ elseif isfield(job,'steps')
     progress.state = 'exporting'; progress.completedSteps = numel(steps);
     write_job_progress(job,progress);
 else
-    [output,operation] = apply_operation(input,job);
+    [output,operation] = apply_region_operation(input,job,roi);
     if strcmp(operation.method,'sobel'), outputKind = 'edge-map'; end
 end
+if ~isempty(roi) && strcmp(outputKind,'edge-map'), outputKind = 'roi-composite'; end
 [originalInfo, originalHistogram] = image_analysis(input);
 [enhancedInfo, enhancedHistogram] = image_analysis(output);
 write_png(input, job.originalPath, alpha);
@@ -58,6 +64,17 @@ result = struct('original',originalInfo,'enhanced',enhancedInfo, ...
     'category',operation.category,'method',operation.method,'parameters',operation.parameters, ...
     'outputKind',outputKind,'gamma',operation.gamma,'lowCutoff',operation.lowCutoff, ...
     'highCutoff',operation.highCutoff,'processor','MATLAB');
+if ~isempty(roi)
+    result.roi = roi;
+    rows = roi.y + (1:roi.height); columns = roi.x + (1:roi.width);
+    [regionOriginal, histOriginal] = image_analysis(input(rows,columns,:));
+    [regionResult, histResult] = image_analysis(output(rows,columns,:));
+    result.roiAnalysis = struct('original',regionOriginal,'enhanced',regionResult, ...
+        'histograms',struct('original',histOriginal,'enhanced',histResult));
+    regionAlpha = []; if ~isempty(alpha), regionAlpha = alpha(rows,columns); end
+    write_png(input(rows,columns,:),job.roiOriginalPath,regionAlpha);
+    write_png(output(rows,columns,:),job.roiOutputPath,regionAlpha);
+end
 if isfield(job,'noise'), result.noise = noise; end
 if isfield(job,'steps')
     result.steps = completed;

@@ -20,6 +20,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import sampleImage from "@/assets/lumalab-sample.jpg";
 import {
+  continueImage,
   checkMatlab,
   uploadImage,
   enhanceImage,
@@ -27,6 +28,7 @@ import {
   checkSequenceProgress,
 } from "@/lib/matlab-api";
 import type {
+  Region,
   Health,
   Method,
   ProcessingResult,
@@ -34,6 +36,16 @@ import type {
   SequenceProgress,
 } from "@/lib/matlab-api";
 
+import { ExperimentWorkbench } from "@/components/experiment-workbench";
+import { RegionSelector } from "@/components/region-selector";
+import {
+  useExperiments,
+  experimentTitle,
+  experimentScope,
+  saveExperiment,
+} from "@/lib/experiments";
+import type { Experiment } from "@/lib/experiments";
+import { containedBounds } from "@/lib/region";
 import { useSurfaceLighting } from "@/lib/use-surface-lighting";
 import { categories, methods, describeResult } from "@/lib/enhancement-methods";
 import { ChoiceGroup } from "@/components/choice-group";
@@ -103,7 +115,7 @@ function LumaLab() {
   const category = selected.category;
   const [result, setResult] = useState<ProcessingResult | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [previewMode, setPreviewMode] = useState<"single" | "sequence">("single");
+  const [previewMode, setPreviewMode] = useState<"single" | "sequence" | "restored">("single");
   const [latestNoise, setLatestNoise] = useState<ProcessingResult | null>(null);
   const [sequenceInput, setSequenceInput] = useState<NoisySequenceInput | null>(null);
   const [sequenceResultInput, setSequenceResultInput] = useState<NoisySequenceInput | null>(null);
@@ -125,6 +137,19 @@ function LumaLab() {
   });
   const [retry, setRetry] = useState(0);
   const neutralResult = useRef<ProcessingResult | null>(null);
+  const { history, setHistory, record } = useExperiments();
+  const [experimentTab, setExperimentTab] = useState<"compare" | "history" | null>(null);
+  const [workingInput, setWorkingInput] = useState<{
+    source: ProcessingResult;
+    label: string;
+  } | null>(null);
+  const [restored, setRestored] = useState<Experiment | null>(null);
+  const [roi, setRoi] = useState<Region | null>(null);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [continuing, setContinuing] = useState(false);
+  const continuation = useRef<AbortController | null>(null);
+  const processingId = workingInput?.source.imageId ?? imageId;
+  const inputLabel = workingInput?.label ?? fileName;
   const sampleLoader = useRef<AbortController | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("split");
@@ -207,6 +232,12 @@ function LumaLab() {
     setPreviewMode("single");
     setSequenceProgress(null);
     setLatestNoise(null);
+    continuation.current?.abort();
+    setContinuing(false);
+    setWorkingInput(null);
+    setRestored(null);
+    setRoi(null);
+    setPan({ x: 0, y: 0 });
     setImageId(null);
     setResult(null);
     neutralResult.current = null;
@@ -256,7 +287,13 @@ function LumaLab() {
   useEffect(() => {
     setPreviewMode("single");
   }, [options]);
-  useEffect(() => () => sequenceController.current?.abort(), []);
+  useEffect(
+    () => () => {
+      sequenceController.current?.abort();
+      continuation.current?.abort();
+    },
+    [],
+  );
   useEffect(() => {
     if (!sequenceRunning || !sequenceRunId) return;
     const controller = new AbortController();
@@ -277,25 +314,36 @@ function LumaLab() {
     };
   }, [sequenceRunning, sequenceRunId]);
   useEffect(() => {
-    if (previewMode === "sequence") return;
-    if (!imageId || health.status !== "ready") return;
+    if (previewMode !== "single" || continuing) return;
+    if (!processingId || health.status !== "ready") return;
     if (parameterError) {
       setIsProcessing(false);
       return;
     }
     const controller = new AbortController();
     setErrorMessage("");
-    if (method === "gamma" && gamma === 1 && neutralResult.current) {
-      setResult(neutralResult.current);
+    if (
+      method === "gamma" &&
+      gamma === 1 &&
+      !roi &&
+      (workingInput?.source ?? neutralResult.current)
+    ) {
+      setResult(workingInput?.source ?? neutralResult.current);
       setIsProcessing(false);
       return () => controller.abort();
     }
     setIsProcessing(true);
     const timer = setTimeout(() => {
-      enhanceImage(imageId, options, controller.signal)
+      enhanceImage(
+        processingId,
+        options,
+        controller.signal,
+        ...(roi ? ([roi] as const) : ([] as const)),
+      )
         .then((output) => {
           if (!controller.signal.aborted) {
             setResult(output);
+            record(output, inputLabel);
             setIsProcessing(false);
           }
         })
@@ -310,23 +358,40 @@ function LumaLab() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [imageId, options, method, gamma, health.status, parameterError, previewMode]);
+  }, [
+    processingId,
+    options,
+    method,
+    gamma,
+    health.status,
+    parameterError,
+    previewMode,
+    roi,
+    workingInput,
+    continuing,
+    record,
+    inputLabel,
+  ]);
 
   const hasCurrentSequence =
     !!result &&
     previewMode === "sequence" &&
     sequencePhase === "success" &&
     result.method === "sequence" &&
-    result.imageId === (sequenceInput?.imageId ?? imageId) &&
+    result.imageId === (sequenceInput?.imageId ?? processingId) &&
     (!sequenceInput ||
       (sequenceInput.cleanImageId === imageId &&
         latestNoise?.noisyImageId === sequenceInput.imageId)) &&
-    sequenceSignature(result.steps ?? []) === sequenceSignature(sequenceSteps);
+    sequenceSignature(result.steps ?? []) === sequenceSignature(sequenceSteps) &&
+    JSON.stringify(result.roi ?? null) === JSON.stringify(roi);
   const hasCurrentResult =
+    (!!result && previewMode === "restored" && restored?.result === result) ||
     hasCurrentSequence ||
     (!!result &&
       previewMode === "single" &&
       !parameterError &&
+      result.imageId === processingId &&
+      JSON.stringify(result.roi ?? null) === JSON.stringify(roi) &&
       result.method === method &&
       result.category === category &&
       Object.entries(options.parameters).every(
@@ -351,9 +416,13 @@ function LumaLab() {
     }
     return "";
   })();
-  const canAdjust = !!imageFile && !!imageId && health.status === "ready" && !sequenceRunning;
+  const canAdjust = !!processingId && health.status === "ready" && !sequenceRunning && !continuing;
   const canSave = hasCurrentResult && !isProcessing && health.status === "ready";
-  const source = neutralResult.current;
+  const source = workingInput?.source ?? neutralResult.current;
+  const hasImage = !!imageUrl || !!workingInput || (previewMode === "restored" && !!restored);
+  const displayedInputInfo = previewMode === "restored" ? result?.original : source?.original;
+  const displayedInputLabel =
+    previewMode === "restored" ? (restored?.source ?? inputLabel) : inputLabel;
   const selectedMethod = selected.name;
   const statusText =
     health.status === "ready"
@@ -362,38 +431,46 @@ function LumaLab() {
         ? "Connecting to MATLAB"
         : "MATLAB unavailable";
   const explanation = selected.explanation;
-  const previewStatus = sequenceRunning
-    ? sequenceProgress?.state === "processing"
-      ? `Applying step ${sequenceProgress.step} of ${sequenceProgress.total}: ${methods.find((item) => item.id === sequenceProgress.method)?.name ?? sequenceProgress.method}`
-      : sequenceProgress?.state === "exporting" || sequenceProgress?.state === "complete"
-        ? "Preparing final sequence result…"
-        : "Waiting for MATLAB to run the sequence…"
-    : isProcessing
-      ? "Processing in MATLAB…"
+  const previewStatus =
+    previewMode === "restored"
+      ? "RESTORED OUTPUT · original upload unchanged"
+      : sequenceRunning
+        ? sequenceProgress?.state === "processing"
+          ? `Applying step ${sequenceProgress.step} of ${sequenceProgress.total}: ${methods.find((item) => item.id === sequenceProgress.method)?.name ?? sequenceProgress.method}`
+          : sequenceProgress?.state === "exporting" || sequenceProgress?.state === "complete"
+            ? "Preparing final sequence result…"
+            : "Waiting for MATLAB to run the sequence…"
+        : isProcessing
+          ? "Processing in MATLAB…"
+          : hasCurrentResult
+            ? hasCurrentSequence
+              ? "MATLAB SEQUENCE COMPLETE"
+              : "MATLAB PROCESSED"
+            : result
+              ? result.method === "sequence"
+                ? "Previous sequence result · run to update"
+                : "Previous result · adjust to update"
+              : "Original preview";
+  const enhancedLabel =
+    previewMode === "restored"
+      ? result?.method === "noise"
+        ? "RESTORED NOISE"
+        : "RESTORED OUTPUT"
       : hasCurrentResult
         ? hasCurrentSequence
-          ? "MATLAB SEQUENCE COMPLETE"
-          : "MATLAB PROCESSED"
+          ? result?.outputKind === "edge-map"
+            ? "SEQUENCE EDGE MAP"
+            : "SEQUENCE RESULT"
+          : result?.outputKind === "edge-map"
+            ? "EDGE MAP"
+            : "ENHANCED"
         : result
           ? result.method === "sequence"
-            ? "Previous sequence result · run to update"
-            : "Previous result · adjust to update"
-          : "Original preview";
-  const enhancedLabel = hasCurrentResult
-    ? hasCurrentSequence
-      ? result?.outputKind === "edge-map"
-        ? "SEQUENCE EDGE MAP"
-        : "SEQUENCE RESULT"
-      : result?.outputKind === "edge-map"
-        ? "EDGE MAP"
-        : "ENHANCED"
-    : result
-      ? result.method === "sequence"
-        ? "LAST SEQUENCE RESULT"
-        : result.outputKind === "edge-map"
-          ? "LAST EDGE MAP"
-          : "LAST RESULT"
-      : "ORIGINAL PREVIEW";
+            ? "LAST SEQUENCE RESULT"
+            : result.outputKind === "edge-map"
+              ? "LAST EDGE MAP"
+              : "LAST RESULT"
+          : "ORIGINAL PREVIEW";
   const resultParameters = result ? describeResult(result) : "Awaiting MATLAB";
   const chooseMethod = (next: Method) => {
     if (sequenceRunning) return;
@@ -438,6 +515,9 @@ function LumaLab() {
   };
   const resetImage = () => {
     setPreviewMode("single");
+    setRestored(null);
+    setRoi(null);
+    setPan({ x: 0, y: 0 });
     setSequencePhase("idle");
     setSequenceProgress(null);
     setSequenceError("");
@@ -460,7 +540,7 @@ function LumaLab() {
     setSequenceProgress(null);
   };
   const addSequenceStep = () => {
-    if (sequenceController.current || parameterError || !imageUrl) return;
+    if (sequenceController.current || parameterError || !processingId) return;
     const snapshot = { ...options, parameters: { ...options.parameters }, id: crypto.randomUUID() };
     setSequenceSteps((current) =>
       current.length < MAX_SEQUENCE_STEPS ? [...current, snapshot] : current,
@@ -496,7 +576,9 @@ function LumaLab() {
   ): string | null => {
     if (sequenceController.current || isProcessing)
       return "Wait for MATLAB processing to finish before adding steps.";
-    if (!imageId) return "Load an image before accepting a sequence.";
+    if (!processingId) return "Load an image before accepting a sequence.";
+    if (workingInput && recommendation.input === "noisy")
+      return "Return to original upload to use its noisy realization. Your continued input stays unchanged.";
     const input = recommendation.input === "noisy" ? noisy && noiseBinding(noisy) : null;
     if (
       recommendation.input === "noisy" &&
@@ -547,7 +629,7 @@ function LumaLab() {
       sequenceController.current ||
       !canAdjust ||
       isProcessing ||
-      !imageId ||
+      !processingId ||
       !sequenceSteps.length ||
       sequenceValidationError
     )
@@ -569,13 +651,15 @@ function LumaLab() {
     setErrorMessage("");
     try {
       const output = await runSequence(
-        sequenceInput?.imageId ?? imageId,
+        sequenceInput?.imageId ?? processingId!,
         steps,
         runId,
         controller.signal,
+        ...(roi ? ([roi] as const) : ([] as const)),
       );
       if (controller.signal.aborted) return;
       setResult(output);
+      record(output, sequenceInput?.label ?? inputLabel, sequenceInput?.noise);
       setSequenceResultInput(sequenceInput);
       setCompareClean(false);
       setSequencePhase("success");
@@ -599,6 +683,10 @@ function LumaLab() {
   };
   const removeImage = () => {
     sampleLoader.current?.abort();
+    continuation.current?.abort();
+    setContinuing(false);
+    setWorkingInput(null);
+    setRestored(null);
     setImageFile(null);
     setImageUrl("");
     setFileName("");
@@ -609,11 +697,96 @@ function LumaLab() {
     setIsProcessing(false);
     resetImage();
   };
+  const currentExperiment = useMemo<Experiment | null>(
+    () =>
+      result
+        ? previewMode === "restored"
+          ? restored
+          : {
+              id:
+                result.runId ??
+                `${result.imageId}:${result.method}:${JSON.stringify(result.parameters)}:${JSON.stringify(result.roi ?? null)}:${result.url.slice(-80)}`,
+              at: Date.now(),
+              source: result.imageId === sequenceInput?.imageId ? sequenceInput.label : inputLabel,
+              result,
+            }
+        : null,
+    [result, previewMode, restored, inputLabel, sequenceInput],
+  );
+  const restoreExperiment = (entry: Experiment) => {
+    if (sequenceRunning || continuing) return;
+    setSequenceResultInput(null);
+    setCompareClean(false);
+    setRestored(entry);
+    setResult(entry.result);
+    setPreviewMode("restored");
+    setIsProcessing(false);
+    setErrorMessage("");
+    setPan({ x: 0, y: 0 });
+    setZoom(100);
+    setExperimentTab(null);
+  };
+  const continueExperiment = async (entry: Experiment) => {
+    if (sequenceRunning || isProcessing || continuing) return;
+    restoreExperiment(entry);
+    const controller = new AbortController();
+    continuation.current = controller;
+    setContinuing(true);
+    setPreviewMode("restored");
+    setExperimentTab(null);
+    setErrorMessage("");
+    try {
+      const bytes = await (await fetch(entry.result.url, { signal: controller.signal })).blob();
+      const input = await continueImage(bytes, controller.signal);
+      if (controller.signal.aborted) return;
+      setWorkingInput({
+        source: input,
+        label: `${entry.source} → ${experimentTitle(entry.result)}`,
+      });
+      setResult(input);
+      setSequenceInput(null);
+      setSequenceResultInput(null);
+      resetImage();
+    } catch (error) {
+      if (!controller.signal.aborted)
+        setErrorMessage(
+          `Could not continue: ${(error as Error).message}. The saved result is still available to download.`,
+        );
+    } finally {
+      if (continuation.current === controller) {
+        continuation.current = null;
+        setContinuing(false);
+      }
+    }
+  };
+  const fitRegion = (region: Region) => {
+    const box = stageRef.current?.getBoundingClientRect();
+    if (!box || !source) return;
+    const bounds = containedBounds(box, source.original.width, source.original.height);
+    const scale = bounds.width / source.original.width;
+    const zoomScale = Math.min(
+      200,
+      Math.min(box.width / (region.width * scale), box.height / (region.height * scale)) * 0.9,
+    );
+    setPan({
+      x: -(region.x + region.width / 2 - source.original.width / 2) * scale * zoomScale,
+      y: -(region.y + region.height / 2 - source.original.height / 2) * scale * zoomScale,
+    });
+    setZoom(Math.round(zoomScale * 100));
+  };
   const saveImage = () => {
     if (!result || !canSave) return;
+    if (previewMode === "restored" && restored) {
+      saveExperiment(restored);
+      return;
+    }
     const link = document.createElement("a");
     link.href = result.url;
-    link.download = `${fileName.replace(/\.[^.]+$/, "")}-${result.method === "sequence" && sequenceResultInput ? "noisy-sequence" : result.method}.png`;
+    const outputName = (workingInput ? inputLabel : fileName)
+      .replace(/\.[^.]+$/, "")
+      .replace(/[^a-zA-Z0-9._-]/g, "-")
+      .slice(0, 120);
+    link.download = `${outputName}-${result.method === "sequence" && sequenceResultInput ? "noisy-sequence" : result.method}.png`;
     link.click();
   };
   const moveDivider = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -626,14 +799,21 @@ function LumaLab() {
   const comparisonOriginalUrl =
     showingNoisySequence && !compareClean
       ? sequenceResultInput!.url
-      : (source?.originalUrl ?? imageUrl);
+      : previewMode === "restored" && restored
+        ? restored.result.originalUrl
+        : (source?.originalUrl ?? imageUrl);
   const comparisonOriginalInfo =
     showingNoisySequence && compareClean ? source?.original : result?.original;
   const comparisonOriginalHistogram =
     showingNoisySequence && compareClean
       ? source?.histograms.original
       : result?.histograms.original;
-  const originalLabel = showingNoisySequence && !compareClean ? "NOISY INPUT" : "ORIGINAL";
+  const originalLabel =
+    showingNoisySequence && !compareClean
+      ? "NOISY INPUT"
+      : workingInput || previewMode === "restored"
+        ? "EXPERIMENT INPUT"
+        : "ORIGINAL";
   const imageCompare = (enhanced: boolean) => (
     <img
       src={enhanced ? (result?.url ?? source?.originalUrl ?? imageUrl) : comparisonOriginalUrl}
@@ -652,7 +832,7 @@ function LumaLab() {
       }
       draggable={false}
       className="comparison-image"
-      style={{ transform: `scale(${zoom / 100})` }}
+      style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})` }}
     />
   );
 
@@ -701,14 +881,14 @@ function LumaLab() {
           </span>
           <button
             type="button"
-            className={`studio-button ${imageUrl ? "secondary" : "primary"} upload-action`}
+            className={`studio-button ${hasImage ? "secondary" : "primary"} upload-action`}
             onClick={() => fileInputRef.current?.click()}
             disabled={sequenceRunning}
           >
             <Upload size={15} />
             <span>Upload image</span>
           </button>
-          {workspaceMode === "studio" && imageUrl && (
+          {workspaceMode === "studio" && hasImage && (
             <button
               type="button"
               className="studio-button primary"
@@ -796,16 +976,16 @@ function LumaLab() {
           </button>
         </nav>
         <div className="studio-content">
-          <div className={`workspace-heading ${imageUrl ? "sr-only" : ""}`}>
+          <div className={`workspace-heading ${hasImage ? "sr-only" : ""}`}>
             <div>
               <p className="eyebrow">THE IMAGE LABORATORY</p>
               <h1>
-                {imageUrl
+                {hasImage
                   ? "A new perspective on every pixel."
                   : "Start with an image. See what changes."}
               </h1>
               <p className="workspace-intro">
-                {imageUrl
+                {hasImage
                   ? "Choose a method, adjust its settings, and compare the result."
                   : "Upload an image → choose a method → compare and save."}
               </p>
@@ -815,11 +995,12 @@ function LumaLab() {
             <div hidden={workspaceMode !== "noise"}>
               <NoisePlayground
                 key={imageId ?? "empty"}
-                clean={source}
+                clean={neutralResult.current}
                 fileName={fileName}
                 health={health}
                 onUpload={() => fileInputRef.current?.click()}
                 onNoiseChange={setLatestNoise}
+                onExperiment={(output, label, noise) => record(output, label, noise)}
                 onAccept={(recommendation, mode, noisy) =>
                   acceptRecommendation(recommendation, mode, noisy)
                 }
@@ -827,7 +1008,47 @@ function LumaLab() {
               />
             </div>
           )}
+          <div className="experiment-entry">
+            <button className="studio-button secondary" onClick={() => setExperimentTab("compare")}>
+              Compare results
+            </button>
+            <button className="studio-button secondary" onClick={() => setExperimentTab("history")}>
+              History <span>{history.length}</span>
+            </button>
+          </div>
+          <ExperimentWorkbench
+            tab={experimentTab}
+            onTab={setExperimentTab}
+            history={history}
+            onHistory={setHistory}
+            current={canSave ? currentExperiment : null}
+            onRestore={restoreExperiment}
+            onContinue={continueExperiment}
+            busy={isProcessing || sequenceRunning || continuing}
+          />
           <div hidden={workspaceMode !== "studio"}>
+            {continuing && (
+              <p className="working-input-notice" role="status">
+                Preparing the selected output as a new MATLAB input…
+              </p>
+            )}
+            {(workingInput || previewMode === "restored") && (
+              <div className="working-input-notice" role="status">
+                {previewMode === "restored" && restored
+                  ? `Restored: ${experimentTitle(restored.result)} · ${restored.source} · ${experimentScope(restored.result)}. Controls still use ${inputLabel}.`
+                  : `Processing input: ${inputLabel}.`}{" "}
+                <button
+                  className="studio-button secondary"
+                  disabled={sequenceRunning || continuing}
+                  onClick={() => {
+                    setWorkingInput(null);
+                    resetImage();
+                  }}
+                >
+                  Return to original upload
+                </button>
+              </div>
+            )}
             {(errorMessage || health.status === "offline") && (
               <div className="studio-alert" role="alert">
                 <span>{errorMessage || health.detail}</span>
@@ -856,20 +1077,24 @@ function LumaLab() {
               </div>
             )}
 
-            <div className={`studio-grid ${imageUrl ? "has-image" : "is-empty"}`}>
+            <div className={`studio-grid ${hasImage ? "has-image" : "is-empty"}`}>
               <section className="inspect-column" aria-label="Image comparison and analysis">
                 <div className="preview-card" data-light-surface>
                   <div className="preview-toolbar">
                     <div className="preview-file">
                       <FileImage size={15} />
-                      <span title={fileName}>{fileName || "No image selected"}</span>
-                      {isDemo && imageUrl && <span className="small-tag">SAMPLE</span>}
-                      {source && (
+                      <span title={displayedInputLabel}>
+                        {displayedInputLabel || "No image selected"}
+                      </span>
+                      {isDemo && !workingInput && previewMode !== "restored" && hasImage && (
+                        <span className="small-tag">SAMPLE</span>
+                      )}
+                      {displayedInputInfo && (
                         <span className="file-dimensions">
-                          {source.original.width} × {source.original.height} px
+                          {displayedInputInfo.width} × {displayedInputInfo.height} px
                         </span>
                       )}
-                      {imageUrl && (
+                      {hasImage && (
                         <button
                           type="button"
                           className="icon-button"
@@ -885,7 +1110,7 @@ function LumaLab() {
                         type="button"
                         className="studio-button secondary reset-button"
                         onClick={resetImage}
-                        disabled={!imageUrl || sequenceRunning}
+                        disabled={!hasImage || sequenceRunning}
                       >
                         <RotateCcw size={14} />
                         Reset
@@ -900,7 +1125,7 @@ function LumaLab() {
                         type="button"
                         aria-pressed={viewMode === "split"}
                         onClick={() => setViewMode("split")}
-                        disabled={!imageUrl}
+                        disabled={!hasImage}
                       >
                         <ArrowLeftRight size={13} />
                         Split
@@ -909,7 +1134,7 @@ function LumaLab() {
                         type="button"
                         aria-pressed={viewMode === "side-by-side"}
                         onClick={() => setViewMode("side-by-side")}
-                        disabled={!imageUrl}
+                        disabled={!hasImage}
                       >
                         Side by side
                       </button>
@@ -933,7 +1158,7 @@ function LumaLab() {
                     onPointerUp={() => setIsDragging(false)}
                     onPointerCancel={() => setIsDragging(false)}
                   >
-                    {imageUrl ? (
+                    {hasImage ? (
                       viewMode === "split" ? (
                         <>
                           {imageCompare(true)}
@@ -1021,6 +1246,30 @@ function LumaLab() {
                       </span>
                     )}
                   </div>
+                  <RegionSelector
+                    stage={stageRef}
+                    width={source?.original.width ?? 0}
+                    height={source?.original.height ?? 0}
+                    region={previewMode === "restored" ? null : roi}
+                    disabled={!canAdjust || previewMode === "restored"}
+                    viewKey={`${imageId}:${processingId}:${viewMode}:${zoom}:${pan.x}:${pan.y}`}
+                    onSelect={() => {
+                      setViewMode("split");
+                      setIsDragging(false);
+                    }}
+                    onApply={(region) => {
+                      setRoi(region);
+                      setPreviewMode("single");
+                      setRestored(null);
+                    }}
+                    onClear={() => {
+                      setRoi(null);
+                      setPreviewMode("single");
+                      setPan({ x: 0, y: 0 });
+                      setZoom(100);
+                    }}
+                    onFit={fitRegion}
+                  />
                   <div className="comparison-controls">
                     <div className="comparison-position">
                       <span>Before</span>
@@ -1030,7 +1279,7 @@ function LumaLab() {
                         max={100}
                         value={split}
                         onChange={(event) => setSplit(Number(event.target.value))}
-                        disabled={!imageUrl || viewMode !== "split"}
+                        disabled={!hasImage || viewMode !== "split"}
                         aria-label="Comparison position"
                       />
                       <span>After</span>
@@ -1040,7 +1289,7 @@ function LumaLab() {
                         type="button"
                         className="icon-button"
                         onClick={() => setZoom((value) => Math.max(50, value - 10))}
-                        disabled={!imageUrl}
+                        disabled={!hasImage}
                         aria-label="Zoom out"
                       >
                         <Minus size={14} />
@@ -1049,8 +1298,8 @@ function LumaLab() {
                       <button
                         type="button"
                         className="icon-button"
-                        onClick={() => setZoom((value) => Math.min(200, value + 10))}
-                        disabled={!imageUrl}
+                        onClick={() => setZoom((value) => Math.min(20000, value + 10))}
+                        disabled={!hasImage}
                         aria-label="Zoom in"
                       >
                         <Plus size={14} />
@@ -1058,8 +1307,11 @@ function LumaLab() {
                       <button
                         type="button"
                         className="icon-button fit-button"
-                        onClick={() => setZoom(100)}
-                        disabled={!imageUrl}
+                        onClick={() => {
+                          setZoom(100);
+                          setPan({ x: 0, y: 0 });
+                        }}
+                        disabled={!hasImage}
                         aria-label="Fit image to view"
                         title="Fit to view"
                       >
@@ -1182,7 +1434,7 @@ function LumaLab() {
                   <h2>Enhancement tools</h2>
                   <span className="eyebrow">01 — 03</span>
                 </div>
-                {!imageUrl && (
+                {!hasImage && (
                   <div className="empty-workflow">
                     <p>Three steps to your first experiment</p>
                     <ol>
@@ -1211,7 +1463,7 @@ function LumaLab() {
                   </div>
                 )}
                 <section
-                  className={`load-section ${imageUrl ? "image-loaded" : ""}`}
+                  className={`load-section ${hasImage ? "image-loaded" : ""}`}
                   data-dragging={isDropActive}
                   title="Upload image or drop a PNG or JPEG here to replace it"
                   onDragOver={(event) => {
@@ -1287,7 +1539,7 @@ function LumaLab() {
                   <ChoiceGroup
                     label="Enhancement method"
                     value={method}
-                    disabled={!imageUrl || sequenceRunning}
+                    disabled={!hasImage || sequenceRunning}
                     className={`method-switch ${category === "spatial" ? "spatial-methods" : ""}`}
                     choices={methods
                       .filter((item) => item.category === category)
@@ -1520,7 +1772,7 @@ function LumaLab() {
                       kernelSize={kernelSize}
                       sigmaValue={sigmaValue}
                       amountValue={amountValue}
-                      disabled={!imageUrl || sequenceRunning}
+                      disabled={!hasImage || sequenceRunning}
                       setKernelSize={setKernelSize}
                       setSigmaValue={setSigmaValue}
                       setAmountValue={setAmountValue}
@@ -1534,7 +1786,7 @@ function LumaLab() {
                   {category === "spatial" && (
                     <FilterSimulation
                       method={method}
-                      imageUrl={imageUrl}
+                      imageUrl={source?.originalUrl ?? imageUrl}
                       kernelSize={kernelSize}
                       sigma={method === "gaussian" || method === "unsharp" ? sigma : 1}
                       amount={method === "unsharp" ? amount : 1}
@@ -1547,7 +1799,7 @@ function LumaLab() {
                       ? "Running your saved sequence…"
                       : hasCurrentSequence
                         ? "Viewing the final sequence result."
-                        : !imageFile
+                        : !processingId
                           ? "Load an image to begin."
                           : !canAdjust
                             ? health.status === "ready"
@@ -1576,7 +1828,9 @@ function LumaLab() {
                 inputLabel={
                   sequenceInput
                     ? `Noisy input · seed ${sequenceInput.noise.seed}`
-                    : "Original image"
+                    : workingInput
+                      ? inputLabel
+                      : "Original image"
                 }
                 validationError={sequenceValidationError}
                 onEdit={(id, options) =>
@@ -1602,7 +1856,10 @@ function LumaLab() {
                         }
                       }}
                       options={[
-                        { value: "original", label: "Clean original" },
+                        {
+                          value: "original",
+                          label: workingInput ? "Current continued input" : "Clean original",
+                        },
                         ...(sequenceInput && sequenceInput.imageId !== latestNoise?.noisyImageId
                           ? [
                               {
@@ -1616,7 +1873,8 @@ function LumaLab() {
                           ? [
                               {
                                 value: latestNoise.noisyImageId,
-                                label: `Noisy realization · seed ${latestNoise.noise?.seed}`,
+                                label: `Noisy realization · seed ${latestNoise.noise?.seed}${workingInput ? " · return to original upload first" : ""}`,
+                                disabled: !!workingInput,
                               },
                             ]
                           : []),
@@ -1635,11 +1893,11 @@ function LumaLab() {
                 phase={sequencePhase}
                 progress={sequenceProgress}
                 error={sequenceError}
-                canAdd={!!imageUrl && !parameterError}
+                canAdd={!!processingId && !parameterError}
                 canRun={canAdjust && !isProcessing}
                 isCurrentResult={hasCurrentSequence}
                 runHint={
-                  !imageUrl
+                  !hasImage
                     ? "Load an image before running these steps."
                     : health.status !== "ready"
                       ? "Start MATLAB to run the saved sequence."
@@ -1715,10 +1973,20 @@ function LumaLab() {
               </details>
             </div>
             <LearningAssistant
-              sourceKey={`${imageId ?? "empty"}:${sequenceInput?.imageId ?? "original"}:${latestNoise?.noisyImageId ?? "none"}`}
-              sourceLabel={sequenceInput?.label ?? fileName}
+              sourceKey={`${processingId ?? "empty"}:${previewMode === "restored" ? restored?.id : "current"}:${JSON.stringify(roi)}:${sequenceInput?.imageId ?? "original"}:${latestNoise?.noisyImageId ?? "none"}`}
+              sourceLabel={
+                previewMode === "restored"
+                  ? (restored?.source ?? inputLabel)
+                  : (sequenceInput?.label ?? inputLabel)
+              }
               sequenceLength={sequenceSteps.length}
-              acceptDisabled={sequenceRunning || isProcessing || !imageId}
+              acceptDisabled={
+                sequenceRunning ||
+                isProcessing ||
+                continuing ||
+                previewMode === "restored" ||
+                !processingId
+              }
               onAccept={(recommendation, mode) =>
                 acceptRecommendation(
                   recommendation,
@@ -1730,7 +1998,7 @@ function LumaLab() {
               }
               context={{
                 mode: "studio",
-                status: !imageId
+                status: !(processingId || (previewMode === "restored" && result))
                   ? "empty"
                   : isProcessing
                     ? "processing"
@@ -1759,18 +2027,31 @@ function LumaLab() {
                         parameters: result.parameters,
                       }
                     : null,
-                workflow: previewMode,
+                workflow:
+                  previewMode === "restored"
+                    ? result?.method === "sequence"
+                      ? "sequence"
+                      : "single"
+                    : previewMode,
+                inputStage:
+                  previewMode === "restored" ? "restored" : workingInput ? "continued" : "uploaded",
+                roi: hasCurrentResult ? (result?.roi ?? null) : roi,
                 sequenceInput: sequenceInput ? "noisy" : "original",
-                resultInput:
-                  result?.method === "sequence" && sequenceResultInput ? "noisy" : "original",
-                noise: sequenceInput?.noise ?? null,
+                resultInput: (
+                  previewMode === "restored"
+                    ? !!restored?.noise
+                    : result?.method === "sequence" && !!sequenceResultInput
+                )
+                  ? "noisy"
+                  : "original",
+                noise:
+                  previewMode === "restored"
+                    ? (restored?.noise ?? result?.noise ?? null)
+                    : (sequenceInput?.noise ?? null),
                 selectedNoise: sequenceInput ? (latestNoise?.noise ?? null) : null,
                 measurements: result
                   ? {
-                      original: measuredContext(
-                        source?.original ?? result.original,
-                        source?.histograms.original ?? result.histograms.original,
-                      ),
+                      original: measuredContext(result.original, result.histograms.original),
                       ...(sequenceResultInput
                         ? {
                             noisy: measuredContext(

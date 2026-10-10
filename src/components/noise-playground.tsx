@@ -22,6 +22,7 @@ export function NoisePlayground({
   health,
   onUpload,
   onNoiseChange,
+  onExperiment,
   onAccept,
   sequenceLength = 0,
 }: {
@@ -30,6 +31,7 @@ export function NoisePlayground({
   health: Health;
   onUpload: () => void;
   onNoiseChange?: (value: ProcessingResult | null) => void;
+  onExperiment?: (value: ProcessingResult, label: string, noise?: NoiseSettings) => void;
   onAccept?: (
     recommendation: SequenceRecommendation,
     mode: "append" | "replace",
@@ -111,6 +113,7 @@ export function NoisePlayground({
       const output = await addNoise(clean.imageId, { ...noise, seed: nextSeed }, controller.signal);
       if (!controller.signal.aborted) {
         setNoisy(output);
+        onExperiment?.(output, `${fileName} · clean original`);
         onNoiseChange?.(output);
         setFiltered(null);
       }
@@ -131,7 +134,14 @@ export function NoisePlayground({
     setBusy("filter");
     try {
       const output = await enhanceImage(noisy.noisyImageId, options, controller.signal);
-      if (!controller.signal.aborted) setFiltered(output);
+      if (!controller.signal.aborted) {
+        setFiltered(output);
+        onExperiment?.(
+          output,
+          `${fileName} · noisy input · seed ${noisy.noise?.seed}`,
+          noisy.noise,
+        );
+      }
     } catch (error) {
       if (!controller.signal.aborted) setError((error as Error).message);
     } finally {

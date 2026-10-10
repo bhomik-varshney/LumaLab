@@ -489,7 +489,7 @@ histograms/statistics and independent mean/median filtering of the noisy pixels.
 The live API check independently uploads the noisy PNG and matches the derived-ID
 filter output, confirming it consumes noise rather than the clean original.
 
-There are 28 frontend/calculation tests and ten isolated Node bridge tests. The latter use an explicitly stubbed provider
+There are 37 frontend/calculation tests and twelve isolated Node bridge tests. The latter use an explicitly stubbed provider
 to test missing configuration, request construction, malformed/oversized responses,
 credential-safe errors, provider/network failures and timeouts. Real Groq calls
 also succeeded using the supplied local credentials/model through the implemented
@@ -514,3 +514,76 @@ source, then ran that accepted noisy sequence through real MATLAB. Both final PN
 downloads matched the returned bytes. Request counts proved no processing before
 Run sequence. Reset noise blocked the old binding, clean comparison remained
 available, and layouts at 320/390/768/1280 pixels had no horizontal overflow.
+
+
+## Compare, history, and regions
+
+Choose an operation and wait for MATLAB, then open **Compare results** and **Add current result**.
+Close the workspace, change a method or parameter, and add the next completed result. Two panels
+are the default; **Add third result** explicitly enables the third. Each panel retains its exact
+input ID, method, parameters, sequence order, ROI, and actual PNG. A different input or rectangle
+requires explicit **Start new comparison**. Select a panel to save its full PNG, use it as the active
+output, or continue from its pixels. The original input reference stays available. Panels share
+fit-to-view proportions and stack on narrow screens.
+
+**History** automatically records successful single operations, complete sequences, generated
+noise, and filtered noisy results. It excludes failed/canceled work and cached neutral resets.
+Select an entry for its image, exact settings, measurements, and ordered steps. **Use as active
+output** pauses the preview on that snapshot; it does not change the original upload, controls,
+or saved sequence. Editing controls resumes processing the current input. **Continue from result**
+re-registers the selected full PNG with MATLAB as an independent temporary input, resets the
+single-operation controls, and preserves saved sequence steps. **Return to original upload**
+returns to the original. Noise Playground always retains its clean original separately. Clear
+history requires confirmation and leaves active outputs and comparison snapshots untouched.
+
+History and comparisons are **in-memory, session-only**: refresh or leaving the page clears them.
+History retains at most **12 entries / 48 MiB** of conservatively counted image strings; old or
+oversized entries can be omitted while the active output remains saveable. No image data enters
+localStorage, sessionStorage, or Groq. Comparison retains at most three snapshots. Continuing
+reuploads the retained PNG, so it also works after the previous MATLAB input expires. The bridge
+bounds continued/noisy temporary inputs to 32 plus any currently active jobs, expires idle inputs
+after 30 minutes, and cleans files on shutdown. Continued PNG uploads are capped at 64 MiB and
+16 million decoded pixels. A failed continuation keeps the selected result available to save.
+
+**Select region** opens drag selection and labeled numeric x/y/width/height controls. Coordinates
+are zero-based source pixels; the selector accounts for object-fit letterboxing, image transforms,
+CSS zoom, and resizing without relying on device-pixel ratio. Drag inside the rectangle to move
+it or its bottom-right corner to resize. **Apply to region** commits at least 8 × 8 pixels within
+the image; subsequent operations and explicit sequence runs use that same rectangle. **Fit region**
+zooms to the selection; **Clear region** returns to full-image processing. Restored snapshots show
+their recorded region in the result details rather than changing the current processing selection.
+
+MATLAB composites the processed region into a copy of the full input; **every sample outside it
+and the original alpha remain unchanged**. Intensity operations use region-local statistics.
+Spatial filters read the complete current image, including pixels outside the rectangle, and use
+the existing replicated boundary only at the actual image edge. Only their ROI output is copied
+back, avoiding artificial crop-edge artifacts. Each sequence step reads the preceding full
+composite. Local Sobel maps are repeated across RGB channels inside an RGB image to preserve
+untouched color outside it; full-image Sobel still returns its existing grayscale edge map.
+Compare/history can focus on the actual MATLAB ROI PNG and show local measurements alongside
+full-output measurements. Export and continue always use the full composite.
+
+Run locally with `npm run dev:full` and open http://localhost:8080. Relevant checks:
+
+```sh
+npm test
+npm run test:bridge
+npx tsc --noEmit
+npm run lint
+npm run build
+npm run test:matlab  # MATLAB on PATH, or set MATLAB_BIN
+npm run test:api    # running local app required
+npm run test:noise-api
+npm run test:roi-api
+```
+
+Actual MATLAB verification covers region RGB/grayscale/uint16 and alpha, exact outside pixels,
+full neighborhood context, image boundaries, minimum sizes, local equalization, Sobel composites,
+ordered sequences, focused PNGs/statistics, and invalid rectangles. Live browser verification
+covers two/three comparison snapshots and selected downloads, independent restoration and
+continuation (including after removal or replacement of the upload), ROI drag/move/resize with zoom and letterboxing, history/sequence integration,
+refresh clearing, and responsive comparison at laptop/tablet/mobile widths. Existing live
+noise/API and explicit AI review-then-run regressions also pass.
+
+The additional live ROI tutor check uses explicitly synthetic metadata; actual MATLAB ROI
+pixels/statistics are checked separately. No history or ROI image is transmitted to Groq.

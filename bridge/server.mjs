@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { loadEnvFile } from "node:process";
 import { explainLearning } from "./learning-assistant.mjs";
 import { noiseOptions } from "./noise.mjs";
+import { validateRegion } from "../shared/region.mjs";
 import { processingOptions, sequenceOptions } from "./processing.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -176,6 +177,8 @@ async function processImage(imageId, options) {
   const responsePath = join(workDir, `${id}.response.json`);
   const outputPath = join(workDir, `${id}.png`);
   const originalPath = join(workDir, `${id}.original.png`);
+  const roiOutputPath = join(workDir, `${id}.roi.png`);
+  const roiOriginalPath = join(workDir, `${id}.roi-original.png`);
   const progressPath = join(workDir, `${id}.progress.json`);
   const runId = isSequence ? options.runId || randomUUID() : undefined;
   if (runId && runs.has(runId))
@@ -205,6 +208,8 @@ async function processImage(imageId, options) {
         inputPath: image.path,
         outputPath,
         originalPath,
+        roiOutputPath,
+        roiOriginalPath,
         ...options,
         ...(run ? { progressPath } : {}),
       }),
@@ -224,6 +229,17 @@ async function processImage(imageId, options) {
       const payload = JSON.parse(raw);
       if (!payload.ok) throw fail(`MATLAB could not process this image: ${payload.error}`, 422);
       const [output, original] = await Promise.all([readFile(outputPath), readFile(originalPath)]);
+      let regionUrls = {};
+      if (options.roi) {
+        const [regionOutput, regionOriginal] = await Promise.all([
+          readFile(roiOutputPath),
+          readFile(roiOriginalPath),
+        ]);
+        regionUrls = {
+          roiUrl: `data:image/png;base64,${regionOutput.toString("base64")}`,
+          roiOriginalUrl: `data:image/png;base64,${regionOriginal.toString("base64")}`,
+        };
+      }
       let noisyImageId;
       if (options.noise) {
         noisyImageId = randomUUID();
@@ -232,7 +248,7 @@ async function processImage(imageId, options) {
         images.set(noisyImageId, { path: noisyPath, usedAt: Date.now(), derived: true });
         // Bound retained realizations without expiring a currently filtering image.
         const derived = [...images].filter(([, value]) => value.derived);
-        let excess = derived.length - 16;
+        let excess = derived.length - 32;
         for (const [oldId, value] of derived) {
           if (excess <= 0) break;
           if (activeImages.has(oldId)) continue;
@@ -243,6 +259,7 @@ async function processImage(imageId, options) {
       }
       return {
         ...payload.result,
+        ...regionUrls,
         imageId,
         ...(runId ? { runId } : {}),
         ...(noisyImageId ? { noisyImageId } : {}),
@@ -279,6 +296,8 @@ async function processImage(imageId, options) {
         responsePath,
         outputPath,
         originalPath,
+        roiOutputPath,
+        roiOriginalPath,
         progressPath,
         `${progressPath}.tmp`,
       ].map((path) => rm(path, { force: true })),
@@ -325,17 +344,21 @@ const server = createServer(async (request, response) => {
       const run = runs.get(runId);
       if (!run) throw fail("Sequence progress is not available yet or has expired.", 404);
       send(200, { runId, ...(await readProgress(run)), processor: "MATLAB" });
-    } else if (request.method === "POST" && request.url === "/api/matlab/images") {
+    } else if (
+      request.method === "POST" &&
+      ["/api/matlab/images", "/api/matlab/inputs"].includes(request.url)
+    ) {
       if (status !== "ready") throw fail(detail, 503);
       const type = request.headers["content-type"];
       if (!["image/png", "image/jpeg"].includes(type))
         throw fail("Only PNG and JPEG uploads are supported.", 415);
-      const bytes = await body(request, maxBytes);
+      const derivedInput = request.url === "/api/matlab/inputs";
+      const bytes = await body(request, derivedInput ? 64 * 1024 * 1024 : maxBytes);
       const png = bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
       const jpeg = bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
       if (!(type === "image/png" ? png : jpeg))
         throw fail("File contents do not match a valid PNG or JPEG image.", 415);
-      if ([...images.values()].filter((image) => !image.derived).length >= 32)
+      if (!derivedInput && [...images.values()].filter((image) => !image.derived).length >= 32)
         throw fail(
           "Upload limit reached. Restart the backend or wait for old images to expire.",
           429,
@@ -343,7 +366,15 @@ const server = createServer(async (request, response) => {
       const imageId = randomUUID();
       const path = join(workDir, `${imageId}${png ? ".png" : ".jpg"}`);
       await writeFile(path, bytes);
-      images.set(imageId, { path, usedAt: Date.now() });
+      images.set(imageId, { path, usedAt: Date.now(), derived: derivedInput });
+      if (derivedInput) {
+        const retained = [...images].filter(([, image]) => image.derived);
+        for (const [oldId, image] of retained.slice(0, Math.max(0, retained.length - 32))) {
+          if (activeImages.has(oldId)) continue;
+          images.delete(oldId);
+          await rm(image.path, { force: true });
+        }
+      }
       try {
         send(200, await processImage(imageId, processingOptions({ method: "gamma" })));
       } catch (error) {
@@ -369,7 +400,12 @@ const server = createServer(async (request, response) => {
           : input.steps === undefined
             ? processingOptions(input, { availableIds: workerOperations })
             : sequenceOptions(input, { availableIds: workerOperations });
-      send(200, await processImage(input.imageId, options));
+      const roi = validateRegion(input.roi);
+      if (roi && input.noise !== undefined)
+        throw fail(
+          "Generate noise on the clean image; select a region when filtering the resulting image.",
+        );
+      send(200, await processImage(input.imageId, { ...options, ...(roi ? { roi } : {}) }));
     } else send(404, { error: "Unknown API route." });
   } catch (error) {
     send(error.statusCode || 500, {

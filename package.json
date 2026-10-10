@@ -8,6 +8,7 @@
     "backend": "node bridge/server.mjs",
     "dev:full": "node scripts/dev.mjs",
     "test:matlab": "node scripts/test-matlab.mjs",
+    "test:roi-api": "node scripts/test-roi-api.mjs",
     "test:noise-api": "node scripts/test-noise-api.mjs",
     "test:bridge": "node --test bridge/*.test.mjs",
     "test:api": "node scripts/test-api.mjs",

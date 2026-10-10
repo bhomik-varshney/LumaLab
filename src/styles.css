@@ -4561,3 +4561,279 @@ summary:focus-visible {
     transform: none !important;
   }
 }
+
+/* Focused experiment tools share the studio's porcelain and crimson surfaces. */
+.experiment-entry,
+.experiment-toolbar,
+.experiment-actions,
+.region-controls,
+.experiment-clear {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.experiment-entry {
+  margin: 12px 0;
+}
+.experiment-dialog {
+  width: min(1120px, calc(100vw - 24px));
+  max-width: 1120px;
+  max-height: 90dvh;
+  overflow: auto;
+  background: var(--card);
+  border-color: var(--border);
+  border-radius: 18px;
+  color: var(--foreground);
+}
+.experiment-dialog p,
+.experiment-dialog small,
+.experiment-dialog time {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.experiment-dialog button:focus-visible,
+.region-controls button:focus-visible,
+.region-controls input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+.experiment-compare-grid {
+  display: grid;
+  gap: 12px;
+  align-items: stretch;
+}
+.experiment-card {
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  padding: 8px;
+  min-width: 0;
+  background: var(--background);
+}
+.experiment-card[data-selected="true"],
+.experiment-history-row[data-selected="true"] {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+.experiment-select {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.experiment-select img {
+  width: 100%;
+  height: 240px;
+  object-fit: contain;
+  background: var(--canvas);
+  border-radius: 8px;
+}
+.experiment-select small {
+  overflow-wrap: anywhere;
+}
+.experiment-card > .studio-button {
+  margin-top: 8px;
+}
+.experiment-empty,
+.experiment-notice {
+  padding: 18px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  font-size: 13px;
+  background: var(--background);
+}
+.experiment-original {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.experiment-original summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.experiment-original img {
+  max-height: 280px;
+  width: 100%;
+  object-fit: contain;
+  margin-top: 10px;
+}
+.experiment-details {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.experiment-details ol {
+  padding-left: 20px;
+  font-size: 12px;
+}
+.experiment-history-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  gap: 16px;
+}
+.experiment-history-list {
+  max-height: 530px;
+  overflow: auto;
+  padding: 3px;
+}
+.experiment-history-row {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  padding: 8px;
+  gap: 5px;
+}
+.experiment-history-row > button:first-child {
+  display: flex;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.experiment-history-row img {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  border-radius: 6px;
+}
+.experiment-history-row span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.experiment-history-row strong {
+  font-size: 12px;
+}
+.experiment-history-preview > img {
+  width: 100%;
+  max-height: 290px;
+  object-fit: contain;
+  background: var(--canvas);
+  border-radius: 10px;
+}
+.experiment-focus {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+.region-controls {
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.region-editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+  width: 100%;
+}
+.region-editor p,
+.region-editor small {
+  flex-basis: 100%;
+  font-size: 12px;
+  margin: 0;
+}
+.region-editor label {
+  display: grid;
+  gap: 3px;
+  font-size: 11px;
+}
+.region-editor input {
+  width: 78px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+}
+.region-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  overflow: hidden;
+}
+.region-overlay[data-interactive="true"] {
+  pointer-events: auto;
+  touch-action: none;
+  cursor: crosshair;
+}
+.region-rectangle {
+  position: absolute;
+  border: 2px solid #fff4dc;
+  outline: 2px solid #7f1731;
+  background: rgb(160 36 56 / 8%);
+  box-shadow: 0 0 0 1px #20111d;
+}
+.region-overlay[data-interactive="true"] .region-rectangle {
+  cursor: move;
+}
+.region-rectangle > span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  background: #67172b;
+  color: #fff4dc;
+  font-size: 10px;
+  padding: 2px 5px;
+  white-space: nowrap;
+}
+.region-handle {
+  position: absolute;
+  bottom: -6px;
+  right: -6px;
+  width: 13px;
+  height: 13px;
+  background: #fff4dc;
+  border: 2px solid #7f1731;
+  cursor: nwse-resize;
+}
+.working-input-notice {
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 12px;
+  margin: 8px 0;
+}
+@media (max-width: 700px) {
+  .experiment-compare-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .experiment-history-layout {
+    grid-template-columns: 1fr;
+  }
+  .experiment-history-list {
+    max-height: 240px;
+  }
+  .experiment-dialog {
+    padding: 18px;
+  }
+  .experiment-select img {
+    height: 250px;
+  }
+}
+
+.experiment-dialog {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.experiment-dialog > h2,
+.experiment-dialog > p,
+.experiment-toolbar {
+  flex-shrink: 0;
+}
+.experiment-body {
+  overflow: auto;
+  min-height: 0;
+  display: grid;
+  gap: 12px;
+  padding: 3px;
+}

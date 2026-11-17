@@ -20,7 +20,6 @@ try {
 } catch (error) {
   if (error.code !== "ENOENT") throw new Error("Cannot read bridge/.env. Check its format.");
 }
-const workDir = await mkdtemp(join(tmpdir(), "lumalab-"));
 const port = Number(process.env.MATLAB_BRIDGE_PORT || 3001);
 const host = process.env.MATLAB_BRIDGE_HOST || "127.0.0.1";
 const mode = process.env.MATLAB_MODE || (production ? "disabled" : "local");
@@ -32,6 +31,7 @@ if (host !== "127.0.0.1" && (!apiToken || apiToken.length < 32))
     "A non-loopback MATLAB bridge requires MATLAB_API_TOKEN of at least 32 characters and an HTTPS reverse proxy.",
   );
 const remote = mode === "remote" ? remoteProcessor() : null;
+const workDir = await mkdtemp(join(tmpdir(), "lumalab-"));
 const maxBytes = 10 * 1024 * 1024;
 const images = new Map();
 const runs = new Map();
@@ -48,6 +48,7 @@ let toolbox = false;
 let workerOperations = [];
 let starting;
 let pending = 0;
+let uploading = 0;
 let closing = false;
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
 const quoteMatlab = (value) => `'${value.replaceAll("'", "''")}'`;
@@ -348,6 +349,7 @@ async function processImage(imageId, options) {
 }
 
 const server = createServer(async (request, response) => {
+  let uploadRequest = false;
   response.setHeader("Content-Type", "application/json");
   response.setHeader("Cache-Control", "no-store");
   const send = (code, value) => {
@@ -373,6 +375,14 @@ const server = createServer(async (request, response) => {
       const expected = Buffer.from(`Bearer ${apiToken}`);
       if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected))
         throw fail("Processing service authorization is required.", 401);
+    }
+    if (
+      request.method === "POST" &&
+      ["/api/matlab/images", "/api/matlab/inputs"].includes(request.url)
+    ) {
+      if (uploading >= 2) throw fail("The upload service is busy. Retry shortly.", 429);
+      uploading++;
+      uploadRequest = true;
     }
     if (request.method === "POST" && request.url === "/api/matlab/learning") {
       if (remote) await refreshRemoteHealth();
@@ -497,6 +507,8 @@ const server = createServer(async (request, response) => {
         : "Bridge failure. Check the backend terminal and retry.",
     });
     if (!error.statusCode) console.error(production ? "Bridge request failed." : error);
+  } finally {
+    if (uploadRequest) uploading--;
   }
 });
 

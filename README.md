@@ -32,23 +32,21 @@ Continue developing this project in the [Lovable editor](https://lovable.dev/pro
 
 ## Development
 
-Use Node.js 22.13+ (22.x) or 24+, npm, and an activated MATLAB supporting `-batch`
+Use Node.js 24.21.0 (selected in `.node-version`), npm, and an activated MATLAB supporting `-batch`
 and function argument validation. **Image Processing Toolbox is optional**: the algorithms use base MATLAB
 matrix arithmetic, convolution, median, cumulative histograms, and native image I/O. No JavaScript or
 Python enhancement fallback is used.
 
 ```sh
 cd pixel-perfect-view-9751
-npm ci --legacy-peer-deps
-./run-site.sh
+npm ci --include=dev
+npm run dev:full
 ```
 
 Open **http://localhost:8080**. `dev:full` starts the frontend and the local bridge
 on `127.0.0.1:3001`. MATLAB starts once and remains running; the connection status
 changes to ready after initialization. Ctrl+C stops both services and MATLAB.
-The legacy peer flag avoids the npm peer-resolver failure encountered with this
-repository's dependency graph. The new DOM dev dependency supplies the peer required
-by the existing React Testing Library for the integration checks.
+The repaired npm lockfile supports a clean `npm ci` without a legacy peer flag.
 
 MATLAB is discovered from `PATH`, or installed MATLAB apps in `/Applications` on
 macOS. If discovery fails, set an executable path for your installation:
@@ -63,6 +61,253 @@ URL when starting Vite. The Vite development proxy routes `/api/matlab` requests
 `npm run preview` and the Lovable-hosted site do not automatically provide the local
 MATLAB service. A deployed build needs an explicitly configured API proxy and a
 MATLAB-capable server.
+
+## Deploy to Render: read the MATLAB limitation first
+
+**The Blueprint deploys the website and optional LUMA AI. It does not deploy MATLAB.**
+The default `MATLAB_MODE=disabled` shows an explicit unavailable-processor status
+and disables processing/export actions. A healthy website is not proof that
+enhancement works. All algorithms and controls remain implemented; there is no
+JavaScript/Python enhancement substitute. To enable them, complete the licensed
+remote-processing setup below and verify actual output before sharing a working
+processing app.
+
+### Architecture found in this repository
+
+This is one npm project, not npm workspaces: React 19/TanStack Start/Vite at the
+root, Node's built-in HTTP server in `bridge/server.mjs`, and `.m` functions in
+`matlab/`. `package-lock.json` is the deployment lockfile; the older `bun.lock`
+is not used. There is no Express, Python backend, database, or MATLAB Engine binding.
+The bridge starts one executable with `matlab -batch`, exchanges atomic job JSON
+and PNGs in an OS temporary directory, and keeps the worker alive for later jobs.
+Groq is called only by the bridge, using `GROQ_API_KEY` and `GROQ_MODEL`.
+
+Local development uses Vite's `/api/matlab` proxy. Production uses
+`scripts/production.mjs`: one public Node HTTP gateway, the built Nitro SSR server,
+and the bridge as two private child processes. The gateway binds to
+`0.0.0.0:$PORT`; the children bind to loopback. Browser API URLs stay relative
+(`/api/matlab/...`), so no localhost URL, frontend API environment variable,
+cross-origin service, or CORS allowlist is needed. Cross-origin browser API calls
+are rejected. Secrets are removed from the SSR child's environment.
+
+`npm run build` preserves the existing Lovable/default target. **Render must use
+`npm run build:render`**, which selects Nitro's `node-server` output.
+`npm start` checks that output before starting. Do not use `vite dev`, `preview`,
+`dev:full`, or the Cloudflare output as the Render start command. TanStack Start
+handles HTTP routing and static assets; **no SPA rewrite is needed**. Currently `/`
+is the app route; unknown direct routes return a genuine 404. A `/* → /index.html`
+rewrite would be incorrect for this SSR service and its API.
+
+### Required accounts and exact Render settings
+
+You need this repository in a Git provider that Render can access, a Render
+account, and a Groq account/key only if you want AI. Full processing additionally
+needs a separately operated, licensed MATLAB host. Do not upload local `.env`
+files or license files to GitHub. `.env` and `.env.*` remain ignored; only
+`.env.example` is tracked. Production ignores `bridge/.env` and uses dashboard
+environment variables.
+
+| Render field                | Exact value                                                                      |
+| --------------------------- | -------------------------------------------------------------------------------- |
+| Service type / runtime      | Web Service / Node                                                               |
+| Blueprint                   | `render.yaml` at repository root                                                 |
+| Root Directory              | Leave blank (repository root containing `package.json`)                          |
+| Build Command               | `npm ci --include=dev && npm run build:render`                                   |
+| Start Command               | `npm start`                                                                      |
+| Node version                | `24.21.0` from `.node-version`                                                   |
+| Health Check Path           | `/healthz`                                                                       |
+| Publish Directory           | Not applicable to a Web Service; assets are `.output/public` and served by Nitro |
+| Rewrites / redirects        | None required                                                                    |
+| Instances / disk / database | One instance; no persistent disk or database                                     |
+| Compute plan in Blueprint   | Starter (paid); it runs Node, not MATLAB                                         |
+
+The single instance matches the bridge's in-memory upload IDs and queue. Large
+PNG responses can require more Node memory than Starter provides; test intended
+image sizes and choose a larger plan if necessary. A Free plan can be used for a
+limited preview, but it sleeps on idle and loses temporary state on restarts.
+See [Render Web Services](https://render.com/docs/web-services),
+[Node versions](https://render.com/docs/node-version), and
+[Free service limitations](https://render.com/docs/free).
+
+| Server variable                          | How to set it                                                                                             |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                               | `production` (Blueprint sets this)                                                                        |
+| `MATLAB_MODE`                            | `disabled` initially; `remote` only after a working licensed HTTPS bridge exists                          |
+| `GROQ_API_KEY`                           | Your private key in Render's Environment settings; Blueprint uses `sync: false`, never a value in YAML    |
+| `GROQ_MODEL`                             | `openai/gpt-oss-120b` (current configured model, Blueprint sets it; requires access in your Groq account) |
+| `PORT`                                   | Supplied by Render; do not override it for the standard deployment                                        |
+| `MATLAB_SERVICE_URL`                     | Remote mode only: your processing bridge's HTTPS origin, without a path/query/embedded credentials        |
+| `MATLAB_SERVICE_TOKEN`                   | Remote mode only: private shared token, at least 32 characters; set in dashboard, never `VITE_*`          |
+| `MATLAB_BRIDGE_PORT`, `LUMALAB_SSR_PORT` | Leave unset; private ports default to `3001` and `3002`                                                   |
+
+There is no requirement to provide credentials to an assistant or paste them into
+source code. Missing Groq settings return a safe, actionable assistant message
+while the rest of the app remains available. Do not set `MATLAB_BIN` to your Mac's
+path on Render: that executable does not exist in its Linux instance.
+
+### Beginner workflow: Blueprint or Dashboard
+
+1. Review these changes, then commit and push them yourself to the Git branch you
+   intend Render to build. This preparation does not create or publish a service.
+2. In Render, choose **New → Blueprint**, connect that repository and branch, and
+   select its root `render.yaml`. Review the Starter plan charge before applying.
+   Enter `GROQ_API_KEY` privately when Render prompts for the non-syncing variable.
+   If AI is unwanted, use the Web Service workflow below and omit the Groq
+   variables; a missing-configuration message is expected. Do not put your key into the YAML.
+3. Alternatively choose **New → Web Service**, connect the same repository/branch,
+   select Node, and enter every value from the settings table above. Under
+   **Environment**, add `NODE_ENV`, `MATLAB_MODE`, `GROQ_API_KEY`, and `GROQ_MODEL`.
+   Set `/healthz` under **Health Checks**. Choose your compute plan and deploy.
+4. Open the service's **Events** and build logs. Confirm a clean npm install and
+   a build reporting `preset: node-server`. Runtime logs should show the gateway
+   listening on Render's port and the bridge's selected mode. Logs must never
+   contain image contents or keys. `/healthz` checks that the SSR and API processes
+   answer, independently of MATLAB; `/api/matlab/health` reports processing status.
+   See [Render health checks](https://render.com/docs/health-checks).
+5. Open the Render-generated HTTPS URL. In default mode, confirm the explicit
+   MATLAB-unavailable banner and disabled processing/save controls. Open LUMA AI
+   and ask a general question about gamma: only the question/settings are sent to
+   Groq, not pixels. An explanation is not a processed image. Uploading an image
+   can show the local original, but cannot produce MATLAB output in disabled mode.
+6. Enable automatic deploys for your chosen branch in the service's Settings if
+   desired. Future pushes rebuild that branch. For a manual retry use **Manual
+   Deploy → Deploy latest commit**; use **Clear build cache & deploy** if a stale
+   build is the issue. Environment changes require a restart/redeploy. Recheck
+   both health routes after each change. Save any wanted PNGs before restarting.
+
+### What works before MATLAB is connected
+
+The UI, navigation, original-image display, split/side-by-side controls, launcher
+movement/reset, and available local educational walkthroughs work independently
+of the processor. Walkthroughs stay labeled illustrative, never exportable
+MATLAB outputs. LUMA AI explanations work with valid Groq settings, but its
+executable capabilities list is empty while MATLAB is unavailable. Empty
+comparison/history panels remain usable. Enhancement, measured MATLAB
+histograms/statistics, sequence execution, noise generation/filtering, ROI
+processing, processed-image saves, and continued processing require a ready
+MATLAB service. They are not verified successes merely because `/healthz` is 200.
+
+### Enable the existing MATLAB path on a separate licensed host
+
+1. Arrange a host with activated **MATLAB R2026a** (the release tested here), a
+   supported OS, and Node 24.21.0. Confirm with your license administrator or
+   MathWorks that your license allows the intended unattended/public-service use;
+   local activation alone does not establish that permission. Install the same
+   repository and run its MATLAB/API tests there. No Image Processing Toolbox is
+   required by the implemented algorithms; native image I/O and base functions
+   are used. All eight operations are startup-probed before being advertised.
+2. Set that host's server environment: `NODE_ENV=production`, `MATLAB_MODE=local`,
+   `MATLAB_BIN` to its actual executable if it is not on PATH,
+   `MATLAB_API_TOKEN` to a private random token of at least 32 characters, and
+   `MATLAB_BRIDGE_HOST=127.0.0.1`. Run `npm run backend` as a supervised service.
+   Place your host's authenticated bridge behind an HTTPS reverse proxy that
+   preserves the `Authorization` header and allows the `/api/matlab` routes.
+   Allow at least 64 MiB continued-input bodies and 390-second processing responses.
+   Keep the raw Node port private/firewalled. Restrict callers to the Render service
+   where your hosting network permits it; the shared token is required on API
+   routes even if network restrictions are configured.
+3. Set `MATLAB_MODE=remote`, `MATLAB_SERVICE_URL`, and `MATLAB_SERVICE_TOKEN` in
+   **Render's server environment**. The token must match the host's
+   `MATLAB_API_TOKEN`. Redeploy. Browser requests still use the Render origin;
+   only the Render bridge sends images to the processing host. Groq still receives
+   metadata only. This is a custom API bridge, not MATLAB Web App Server.
+4. Confirm `/api/matlab/health` says `ready` and lists the implemented operations.
+   Use a small PNG/JPEG to test real enhancement, a two-step sequence/progress,
+   Noise Playground, ROI, compare/history, continuation, and a downloaded PNG.
+   Stop the processor and confirm the UI returns to an honest unavailable state.
+   A remote service URL/token is account-specific and must be supplied by you.
+
+The bridge never installs or activates MATLAB. Render's native Node environment
+does not include it. A Docker-based direct MATLAB deployment would require your
+own Linux installation/licensing, OS libraries, adequate resources, and a
+separately tested image; none is supplied or claimed to work here. MathWorks'
+[R2026a Linux requirements](https://www.mathworks.com/content/dam/mathworks/mathworks-dot-com/support/sysreq/files/system-requirements-release-2026a-linux.pdf)
+include x86-64 with at least two cores, 8 GB RAM (16 GB recommended), and 4.5 GB
+for MATLAB alone, plus job storage and dependencies. Supported distributions
+include Ubuntu 22.04/24.04 and Debian 12/13; minimal images may lack required libraries.
+
+**MATLAB Compiler/Runtime is not a tested deployment path in this repository.**
+Compiler is not installed on the available Mac; there is no Linux executable,
+Runtime installation/container, or compiled worker adapter. The current bridge
+calls `matlab -batch`, which Runtime does not provide. Packaging would need a
+Linux Compiler build, matching release/update Runtime, explicit inclusion of the
+shared operation registry and `.m` implementations, and changes to deployment
+function discovery (`exist(...,'file') == 2`), readiness `ver`/`license` checks,
+registry paths, and the executable launcher. These packaging changes need validation, not assumptions. It then needs all numeric/API/ROI/
+sequence/noise tests on Linux. Runtime size depends on included components;
+this repository has no built artifact to measure. Runtime is freely distributable
+for compiled applications, but creating the executable requires MATLAB Compiler.
+See [standalone applications](https://www.mathworks.com/help/compiler/standalone-applications.html),
+[matching Runtime versions](https://www.mathworks.com/help/compiler/about-the-matlab-runtime.html),
+[platform portability](https://www.mathworks.com/help/compiler/ensuring-multi-platform-portability.html),
+and [Runtime containers](https://www.mathworks.com/help/compiler/get-matlab-runtime-container.html).
+MathWorks specifically requires MATLAB Web App Server to stay on a trusted
+intranet and never be exposed to the open internet; it is not a public Render
+shortcut. See [its installation/security requirements](https://www.mathworks.com/help/webappserver/ug/install-or-uninstall-matlab-web-app-server-product.html).
+
+### Temporary files, history, and deployment verification
+
+Uploaded originals are limited to 10 MiB; continued PNG/JPEG inputs to 64 MiB.
+Both enforce MIME/signature validation and MATLAB validates single-frame decoding
+and at most 16 million pixels before reading. JSON processing requests are capped
+at 4 KiB; tutor requests at 16 KiB. The worker queue is bounded to eight pending
+jobs, uploads to two concurrent requests, local AI requests to two concurrent calls, and responses/timeouts are bounded.
+Remote errors never echo provider response bodies or the shared credential.
+The remote transport requires HTTPS, refuses redirects, and bounds output at 256 MiB.
+
+The processing host keeps bounded in-memory IDs/progress and private temporary
+image/job files. Inactive inputs expire after 30 minutes; completed progress after
+five minutes. Job outputs are deleted after responses, and the worker directory
+is removed on graceful shutdown. Abrupt crashes/restarts discard the IDs and can
+leave temporary files until the host's OS cleanup; Render's ephemeral filesystem
+does not preserve them across redeploys. Do not use these directories as storage.
+History/comparisons remain browser-memory session data and clear on refresh;
+only launcher position is in localStorage. PNG downloads are the durable saved
+files on the user's device. No durable server-save feature exists, so this
+Blueprint adds no disk/database. A future server library would require explicit
+object storage (for example S3) and access controls rather than relying on local
+files. See [Render persistent disks](https://render.com/docs/disks).
+
+From the repository root, with Node 24.21.0:
+
+```sh
+npm ci --include=dev
+npm run lint
+npm run typecheck
+npm test
+npm run test:bridge
+npm run build:render
+npm run check:secrets
+npm run test:production
+# Start it yourself, then open http://localhost:10000:
+MATLAB_MODE=disabled npm start
+# Optional, requires a licensed local MATLAB executable and opens isolated test ports:
+npm run test:remote-matlab
+# Standalone real numeric/image tests:
+npm run test:matlab
+```
+
+`test:production` starts/stops the real built server with MATLAB and Groq disabled;
+it tests health, SSR/assets, direct-route 404, API routing, CORS rejection, and safe
+missing-processor/AI errors without external calls. `test:remote-matlab` requires
+real local MATLAB and OpenSSL, creates a temporary local HTTPS test proxy, and
+exercises authenticated transport for uploads, all eight methods, ROI,
+sequence/progress, noise/filtering and continued inputs. It does not prove a
+Render/Linux runtime works. Secret scanning checks tracked files and public build
+assets for credential signatures/configured secret values without reading ignored
+`.env` files or printing values. No live Render deployment was performed.
+
+Preparation verification (2026-10-10): clean npm install under Node 24.21.0;
+43 frontend tests and 16 bridge tests passed; TypeScript and the Node production
+build passed; lint had zero errors and six pre-existing Fast Refresh warnings.
+The production smoke test, authenticated local HTTPS/MATLAB transport test,
+all five real MATLAB numeric suites, and credential scan passed. The built UI
+was checked in Chromium at 1366px and 390px with processing unavailable, missing
+AI configuration, comparison panels, and the local simulation. Live Groq was not
+called during deployment preparation; existing provider tests use isolated stubs.
+MATLAB was R2026a Update 4 on Apple Silicon macOS, with no installed Compiler or
+Image Processing Toolbox. Render, Linux MATLAB, and compiled Runtime execution
+were not verified, and full public processing remains conditional on those prerequisites.
 
 ## Processing and interface
 
@@ -492,7 +737,7 @@ histograms/statistics and independent mean/median filtering of the noisy pixels.
 The live API check independently uploads the noisy PNG and matches the derived-ID
 filter output, confirming it consumes noise rather than the clean original.
 
-There are 37 frontend/calculation tests and twelve isolated Node bridge tests. The latter use an explicitly stubbed provider
+There are 43 frontend/calculation tests and sixteen isolated Node bridge tests. Provider cases use an explicitly stubbed provider
 to test missing configuration, request construction, malformed/oversized responses,
 credential-safe errors, provider/network failures and timeouts. Real Groq calls
 also succeeded using the supplied local credentials/model through the implemented

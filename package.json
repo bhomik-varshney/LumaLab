@@ -14,6 +14,7 @@
     "build:render": "node scripts/build-render.mjs",
     "typecheck": "tsc --noEmit",
     "test:production": "node scripts/test-production.mjs",
+    "test:remote-matlab": "node scripts/test-remote-matlab.mjs",
     "check:secrets": "node scripts/check-secrets.mjs",
     "test:matlab": "node scripts/test-matlab.mjs",
     "test:roi-api": "node scripts/test-roi-api.mjs",

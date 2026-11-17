@@ -6,7 +6,7 @@ transformations, spatial filtering, histogram analysis, noise removal, region-ba
 processing, processing sequences, result comparison, and image statistics through
 one interactive studio.
 
-**GitHub repository:** [bhomik-varshney/pixel-perfect-view-9751](https://github.com/bhomik-varshney/pixel-perfect-view-9751)
+**GitHub repository:** [bhomik-varshney/LumaLab](https://github.com/bhomik-varshney/LumaLab)
 
 For a concise project summary, submission checklist, and teacher email template,
 see [SUBMISSION.md](SUBMISSION.md).

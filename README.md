@@ -1,12 +1,22 @@
-# Pixel Perfect Pix
+# LumaLab — MATLAB-Powered Image Enhancement Studio
 
-LumaLab is a local image enhancement laboratory with a React/TanStack Start frontend
-and real MATLAB processing. Its porcelain studio follows the warm crimson/coral
-reference dashboard: a serif wordmark, navigation rail, prominent image comparison,
-right-hand histogram and tools, and a full-width saved-sequence strip. Shared warm
-surfaces and subtle lighting support contextual adjustments and actual image
-histograms/statistics. Intensity transformations change tones; spatial filters
-use neighboring pixels to smooth noise, sharpen detail, or reveal edges.
+LumaLab is an academic image-processing application with a React/TanStack Start
+frontend and real MATLAB processing. It demonstrates practical intensity
+transformations, spatial filtering, histogram analysis, noise removal, region-based
+processing, processing sequences, result comparison, and image statistics through
+one interactive studio.
+
+**GitHub repository:** [bhomik-varshney/pixel-perfect-view-9751](https://github.com/bhomik-varshney/pixel-perfect-view-9751)
+
+For a concise project summary, submission checklist, and teacher email template,
+see [SUBMISSION.md](SUBMISSION.md).
+
+Its porcelain studio follows a warm crimson/coral dashboard: a serif wordmark,
+navigation rail, prominent image comparison, right-hand histogram and tools, and a
+full-width saved-sequence strip. Shared warm surfaces and subtle lighting support
+contextual adjustments and actual image histograms/statistics. Intensity
+transformations change tones; spatial filters use neighboring pixels to smooth
+noise, sharpen detail, or reveal edges.
 
 The floating **LUMA AI** button opens the Groq-backed learning assistant. Drag its
 grip with a mouse or touch, or focus the grip and use arrow keys (Shift for larger
@@ -18,17 +28,12 @@ frame edges, stays static on touch screens, and respects reduced motion. Histogr
 bars use actual luminance counts; preset curves illustrate the existing settings,
 and sequence thumbnails show only the real input and completed output.
 
-This project was built with [Lovable](https://lovable.dev).
+## Submission overview
 
-**Live app**: https://pixel-perfect-view-9751.lovable.app
-
-## Build with Lovable
-
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/907b37a4-a22b-4a4c-a40d-2234f9db09d0).
-
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+LumaLab is ready to be submitted as a source-code assignment. Before submission,
+replace the bracketed student and course fields in [SUBMISSION.md](SUBMISSION.md),
+verify the repository link above after any GitHub repository rename, and attach or
+share the required repository URL with the faculty member.
 
 ## Development
 
@@ -38,7 +43,7 @@ matrix arithmetic, convolution, median, cumulative histograms, and native image 
 Python enhancement fallback is used.
 
 ```sh
-cd pixel-perfect-view-9751
+cd <your-cloned-repository-directory>
 npm ci --include=dev
 npm run dev:full
 ```
@@ -58,9 +63,8 @@ MATLAB_BIN="/absolute/path/to/matlab" npm run dev:full
 Alternatively, use two terminals: `npm run backend` and `npm run dev`. Optional
 `MATLAB_BRIDGE_PORT` changes the bridge port; set `MATLAB_BRIDGE_URL` to its matching
 URL when starting Vite. The Vite development proxy routes `/api/matlab` requests;
-`npm run preview` and the Lovable-hosted site do not automatically provide the local
-MATLAB service. A deployed build needs an explicitly configured API proxy and a
-MATLAB-capable server.
+`npm run preview` does not automatically provide the local MATLAB service. A
+deployed build needs an explicitly configured API proxy and a MATLAB-capable server.
 
 ## Deploy to Render: read the MATLAB limitation first
 
@@ -90,7 +94,7 @@ and the bridge as two private child processes. The gateway binds to
 cross-origin service, or CORS allowlist is needed. Cross-origin browser API calls
 are rejected. Secrets are removed from the SSR child's environment.
 
-`npm run build` preserves the existing Lovable/default target. **Render must use
+`npm run build` preserves the existing default target. **Render must use
 `npm run build:render`**, which selects Nitro's `node-server` output.
 `npm start` checks that output before starting. Do not use `vite dev`, `preview`,
 `dev:full`, or the Cloudflare output as the Render start command. TanStack Start

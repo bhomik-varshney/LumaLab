@@ -82,32 +82,3 @@ The interactive interface can load without MATLAB, but real enhancement, measure
 output statistics, sequences, ROI processing, noise filtering, and processed-image
 export require the MATLAB bridge to be available. The optional LUMA AI assistant is
 separate from image processing and requires its own server-side configuration.
-
-## Email draft to faculty
-
-**Subject:** Assignment Submission — LumaLab: MATLAB-Powered Image Enhancement Studio
-
-Dear **[Faculty Member's Name]**,
-
-Please find my assignment submission for **[Course Name / Code]** attached/shared
-below. The project is titled **LumaLab — MATLAB-Powered Image Enhancement Studio**.
-
-LumaLab demonstrates practical digital image-processing concepts through an
-interactive web interface connected to MATLAB. It includes intensity transformations
-(gamma correction, histogram equalization, and contrast stretching), spatial
-filtering (mean, Gaussian, median, unsharp masking, and Sobel edge detection),
-histogram and statistical analysis, noise generation and removal, region-of-interest
-processing, ordered processing sequences, result comparison/history, and PNG export.
-The application is designed to show both the image-processing workflow and the
-integration of a modern frontend with MATLAB-based computation.
-
-GitHub repository: https://github.com/bhomik-varshney/pixel-perfect-view-9751
-
-Kindly let me know if any additional material or demonstration is required.
-
-Regards,  
-**[Your Name]**  
-**Designation / Programme / Semester:** [Your designation, programme, and semester]  
-**Faculty Number:** [Faculty number]  
-**Enrolment Number:** [Enrolment number]  
-**Contact Number:** [Contact number]
